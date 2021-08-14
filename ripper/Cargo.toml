@@ -1,0 +1,14 @@
+[package]
+name = "ripper"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+zerocopy = "0.5"
+zerocopy-derive = "0.3"
+c_macros = { path = "../c_macros" }
+bitflags = "1.3"
+
+
