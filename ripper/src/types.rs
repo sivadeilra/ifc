@@ -175,3 +175,22 @@ bitflags! {
         const RESTRICT = 1 << 2;
     }
 }
+
+impl Ifc {
+    pub fn is_void(&self, t: TypeIndex) -> bool {
+        if t.tag() != TypeSort::FUNDAMENTAL {
+            return false;
+        }
+
+        let tf = self.type_fundamental().entry(t.index()).unwrap();
+        tf.basis == TypeBasis::VOID
+    }
+
+    pub fn as_fundamental_type(&self, t: TypeIndex) -> Option<&FundamentalType> {
+        if t.tag() == TypeSort::FUNDAMENTAL {
+            Some(self.type_fundamental().entry(t.index()).unwrap())
+        } else {
+            None
+        }
+    }
+}
