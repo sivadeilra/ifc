@@ -84,6 +84,7 @@ pub enum TypePrecision {
     DEFAULT,
     SHORT,
     LONG,
+    BIT8,
     BIT16,
     BIT32,
     BIT64,

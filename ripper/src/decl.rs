@@ -59,7 +59,7 @@ bitflags! {
     #[derive(AsBytes, FromBytes)]
     #[repr(transparent)]
     pub struct BasicSpecifiers : u8 {
-        const CXX = 0;                              // C++ language linkage
+        // const CXX = 0;                              // C++ language linkage
         const C = 1 << 0;                           // C language linkage
         const INTERNAL = 1 << 1;                    //
         const VAGUE = 1 << 2;                       // Vague linkage, e.g. COMDAT, still external
@@ -70,6 +70,20 @@ bitflags! {
         const IS_MEMBER_OF_GLOBAL_MODULE = 1 << 7;  // member of the global module
     }
 }
+bitflags! {
+    #[derive(AsBytes, FromBytes)]
+    #[repr(transparent)]
+    pub struct ObjectTraits : u8 {
+        const NONE = 0;
+        const CONSTEXPR = 1;
+        const MUTABLE = 2;
+        const THREAD_LOCAL = 4;
+        const INLINE = 8;
+        const INITIALIZER_EXPORTED = 0x10;
+        const VENDOR = 0x80;
+    }
+}
+
 // "decl.alias"
 #[repr(C)]
 #[derive(AsBytes, FromBytes, Clone, Debug)]
@@ -98,14 +112,49 @@ pub enum ReachableProperties {
 
 #[c_enum(storage = "u32")]
 pub enum NameSort {
+    /// An ordinary textual identifier.  The index value is a TextOffset.
     IDENTIFIER = 0,
+
+    /// An operator function name. The index field is an index into the operator partition
+    /// (`name.operator`). Each entry in that partition has two components: a _category_ field
+    /// denoting the specified operator, and an _encoded_ field.
     OPERATOR = 1,
+
+    /// A conversion-function name. The _index_ is an index into the conversion function name
+    /// partition (`name.conversion`).
     CONVERSION = 2,
+
+    /// A reference to a string literal operator name. The _index_ field is an index into the
+    /// string literal operator partition (`name.literal`).
     LITERAL = 3,
+
+    /// A reference to an assumed (as opposed to _declared_) template name. This is the case of
+    /// nested-name of qualified-id where the qualifier is a dependent name and the unqualified
+    /// part is asserted to name a template.  The _index_ field is an index into the partition
+    /// of assumed template names (`name.template`).
     TEMPLATE = 4,
+
+    /// A reference to a template-id, i.e. what in C++ source code is a template-name followed by
+    /// a template-argument list.  The _index_ field is an index into the template-id partition
+    /// (`name.specialization`).
     SPECIALIZATION = 5,
+
+    /// A reference to a source file name. The _index_ field is an index into the partition of
+    /// source file names (`name.source-file`).
     SOURCE_FILE = 6,
+
+    /// A reference to a user-authored deduction guide name for a class template. Note that
+    /// deduction guides don't have names at the C++ source level. The _index_ field is an index
+    /// into the deduction guides partition (`name.guide`).
     GUIDE = 7,
+}
+
+/// for `name.source-file`
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct NameSourceFile {
+    pub path: TextOffset,
+    pub guard: TextOffset,
 }
 
 // Chapter 12
@@ -165,3 +214,83 @@ pub enum NoexceptSort {
     INFERRED,
     UNENFORCED,
 }
+
+
+// 8.2
+// "decl.scope"
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct DeclScope {
+    pub name: NameIndex,
+    pub locus: SourceLocation,
+
+    pub ty: TypeIndex,
+
+    pub base: TypeIndex,
+    pub initializer: ScopeIndex,
+    pub home_scope: DeclIndex,
+    pub alignment: ExprIndex,
+    pub pack_size: PackSize,
+    pub specifiers: BasicSpecifiers,
+    pub traits: ScopeTraits,
+    pub access: Access,
+    pub properties: ReachableProperties,
+    pub __padding: [u8; 2],
+}
+
+#[c_enum(storage = "u8")]
+pub enum ScopeTraits {
+    NONE = 0,
+    UNNAMED = 1,
+    INLINE = 2,
+    INITIALIZER_EXPORTED = 4,
+    CLOSURE_TYPE = 8,
+    FINAL = 0x40,
+    VENDOR = 0x80,
+}
+
+pub type PackSize = u16;
+
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct DeclField {
+    pub name: TextOffset,
+    pub locus: SourceLocation,
+    pub ty: TypeIndex,
+    pub home_scope: DeclIndex,
+    pub initializer: ExprIndex,
+    pub alignment: ExprIndex,
+    pub traits: ObjectTraits,
+    pub specifier: BasicSpecifiers,
+    pub access: Access,
+    pub properties: ReachableProperties,
+}
+
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct DeclEnum {
+    pub name: TextOffset,
+    pub locus: SourceLocation,
+    pub ty: TypeIndex,
+    pub base: TypeIndex,
+    pub initializer: Sequence,
+    pub home_scope: DeclIndex,
+    pub alignment: ExprIndex,
+    pub specifiers: BasicSpecifiers,
+    pub access: Access,
+    pub properties: ReachableProperties,
+    pub __padding: [u8; 1],
+}
+
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct DeclEnumerator {
+    pub name: TextOffset,
+    pub locus: SourceLocation,
+    pub ty: TypeIndex,
+    pub initializer: ExprIndex,
+    pub specifier: BasicSpecifiers,
+    pub access: Access,
+    pub __padding: [u8; 2],
+}
+

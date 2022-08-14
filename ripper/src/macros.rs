@@ -30,3 +30,11 @@ macro_rules! tagged_index {
         }
     };
 }
+
+#[macro_export]
+macro_rules! nyi {
+    () => {
+
+        println!("{}:{} >>> not yet implemented", file!(), line!());
+    }
+}

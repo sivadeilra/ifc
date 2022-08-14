@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+use anyhow::{bail, Result};
 use core::mem::size_of;
 use core::ops::Range;
 use std::collections::HashMap;
@@ -14,8 +15,10 @@ mod macros;
 
 mod decl;
 mod error;
+mod expr;
 mod parts;
 mod types;
+mod words;
 mod zerocopy_utils;
 
 use bitflags::bitflags;
@@ -26,8 +29,10 @@ use zerocopy_utils::*;
 
 pub use decl::*;
 pub use error::*;
+pub use expr::*;
 pub use parts::*;
 pub use types::*;
+pub use words::*;
 
 #[repr(C)]
 #[derive(FromBytes, AsBytes, Clone, Default)]
@@ -48,9 +53,25 @@ pub type Cardinality = u32;
 pub type EntitySize = u32;
 pub type Index = u32;
 
-struct Sequence {
+#[repr(C)]
+#[derive(Clone, Debug, AsBytes, FromBytes)]
+pub struct Sequence {
     pub start: Index,
     pub cardinality: Cardinality,
+}
+
+impl Sequence {
+    pub fn to_range(&self) -> Range<u32> {
+        self.start..self.start + self.cardinality
+    }
+}
+
+impl IntoIterator for Sequence {
+    type Item = u32;
+    type IntoIter = Range<u32>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.start..self.start + self.cardinality
+    }
 }
 
 pub type Version = u8;
@@ -130,7 +151,6 @@ pub struct ScopeDescriptor {
 // 7 Heaps
 
 pub type StmtIndex = u32; // heap.stmt
-pub type ExprIndex = u32; // heap.expr
 pub type SyntaxIndex = u32; // heap.syn
 pub type FormIndex = u32; // heap.form
 pub type ChartIndex = u32; // heap.chart
@@ -153,7 +173,7 @@ pub type SentenceIndex = u32;
 
 fn read_struct_at<T: AsBytes + FromBytes>(s: &[u8]) -> Result<T> {
     if core::mem::size_of::<T>() > s.len() {
-        return Err(Error::bad("structure is larger than input slice"));
+        bail!("structure is larger than input slice");
     }
     let mut value: T = unsafe { core::mem::zeroed::<T>() };
     value.as_bytes_mut().copy_from_slice(&s[..size_of::<T>()]);
@@ -164,7 +184,7 @@ fn get_slice(s: &[u8], range: Range<usize>) -> Result<&[u8]> {
     if let Some(rs) = s.get(range) {
         Ok(rs)
     } else {
-        Err(Error::bad("range is out of bounds of input slice"))
+        bail!("range is out of bounds of input slice");
     }
 }
 
@@ -181,18 +201,14 @@ impl<'a> StringTable<'a> {
                     let sb = &strings_at_offset[..i];
                     return match core::str::from_utf8(sb) {
                         Ok(s) => Ok(s),
-                        Err(_) => Err(Error::BadString),
+                        Err(_) => bail!("Bad UTF-8 string in ifc"),
                     };
                 }
             }
             // Never found end of string!
-            Err(Error::bad(
-                "string at end of string table was not NUL-terminated",
-            ))
+            bail!("string at end of string table was not NUL-terminated");
         } else {
-            Err(Error::bad(
-                "string offset was beyond bounds of string table",
-            ))
+            bail!("string offset was beyond bounds of string table");
         }
     }
 }
@@ -207,13 +223,17 @@ pub struct Ifc {
 }
 
 impl Ifc {
+    pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        let file_data = std::fs::read(path)?;
+        Self::load(file_data)
+    }
+
     pub fn load(data: Vec<u8>) -> Result<Self> {
         let fs = data.as_slice();
 
         let sig = read_struct_at::<[u8; 4]>(&fs[0..])?;
         if sig != IFC_FILE_SIGNATURE {
-            println!("File does not have IFC file signature.");
-            return Err(Error::bad("File does not have IFC signature"));
+            bail!("File does not have IFC signature");
         }
 
         let file_header = read_struct_at::<FileHeader>(&fs[4..])?;
@@ -222,7 +242,7 @@ impl Ifc {
         let strings_range = file_header.string_table_bytes as usize
             ..file_header.string_table_bytes as usize + file_header.string_table_size as usize;
         if fs.get(strings_range.clone()).is_none() {
-            return Err(Error::bad("string table range is not valid"));
+            bail!("IFC string table range is not valid");
         }
 
         let mut ifc = Ifc {
@@ -258,10 +278,11 @@ impl Ifc {
             let part_data = if let Some(part_data) = ifc.data.get(part_range.clone()) {
                 part_data
             } else {
-                return Err(Error::bad_string(format!(
+                bail!(
                     "partition {} {:?} is invalid; its range is outside the ifc file size",
-                    i, partition_name
-                )));
+                    i,
+                    partition_name
+                );
             };
 
             ifc.parts.load_part_data(
@@ -286,6 +307,10 @@ impl Ifc {
 
     pub fn global_scope(&self) -> ScopeIndex {
         self.file_header.global_scope
+    }
+
+    pub fn file_header(&self) -> &FileHeader {
+        &self.file_header
     }
 
     pub fn parts(&self) -> &HashMap<String, PartEntry> {
@@ -442,6 +467,16 @@ impl Ifc {
             _ => format!("{:?}", type_index),
         })
     }
+
+    pub fn is_type_namespace(&self, ty: TypeIndex) -> Result<bool> {
+        match ty.tag() {
+            TypeSort::FUNDAMENTAL => {
+                let ft = self.type_fundamental().entry(ty.index())?;
+                Ok(ft.basis == TypeBasis::NAMESPACE)
+            }
+            _ => Ok(false),
+        }
+    }
 }
 
 pub struct Part<'a, T> {
@@ -454,12 +489,12 @@ impl<'a, T> Part<'a, T> {
         if let Some(entry) = self.entries.get(entry_index as usize) {
             Ok(entry)
         } else {
-            Err(Error::bad_string(format!(
-                "bad entry index in partition '{}'. index: {}, len: {}",
+            bail!(
+                "IFC: bad entry index in partition '{}'. index: {}, len: {}",
                 self.part_name,
                 entry_index,
                 self.entries.len()
-            )))
+            )
         }
     }
 }

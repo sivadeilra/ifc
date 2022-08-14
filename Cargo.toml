@@ -2,4 +2,5 @@
 members = [
     "ripper",
     "c_macros",
+    "gen_rust",
 ]

@@ -1,5 +1,6 @@
 use super::*;
 use core::mem::size_of;
+use anyhow::Result;
 
 // Partition
 
@@ -126,6 +127,11 @@ where
 part_info! {
     decl_alias, "decl.alias", DeclAlias;
     decl_function, "decl.function", DeclFunc;
+    decl_scope, "decl.scope", DeclScope;
+    decl_field, "decl.field", DeclField;
+    decl_enum, "decl.enum", DeclEnum;
+    decl_enumerator, "decl.enumerator", DeclEnumerator;
+
     heap_type, "heap.type", TypeIndex;
     scope_desc, "scope.desc", ScopeDescriptor;
     scope_member, "scope.member", DeclIndex;
@@ -134,4 +140,13 @@ part_info! {
     type_pointer, "type.pointer", TypeIndex;
     type_qualified, "type.qualified", QualifiedType;
     type_tuple, "type.tuple", TupleType;
+    name_source_file, "name.source-file", NameSourceFile;
+    command_line, "command_line", TextOffset;
+
+    expr_literal, "expr.literal", ExprLiteral;
+    const_i64, "const_i64", u64;
+    const_f64, "const_f64", ConstF64;
+
+    // Attributes using AttrSort::Basic
+    attr_basic, "attr.basic", Word;
 }
