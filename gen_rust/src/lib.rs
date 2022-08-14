@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::*;
-use ripper::*;
+use ifc::*;
 use syn::Ident;
 use syn::*;
 
@@ -188,7 +188,7 @@ fn get_type_tokens(ifc: &Ifc, type_index: TypeIndex) -> Result<TokenStream> {
 }
 
 // This converts literal expressions into token streams.
-fn gen_expr_tokens(ifc: &Ifc, expr: ripper::ExprIndex) -> Result<TokenStream> {
+fn gen_expr_tokens(ifc: &Ifc, expr: ifc::ExprIndex) -> Result<TokenStream> {
     println!("gen_expr_tokens: expr = {:?}", expr);
     Ok(match expr.tag() {
         ExprSort::LITERAL => {

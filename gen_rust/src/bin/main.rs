@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ripper::Ifc;
+use ifc::Ifc;
 use structopt::StructOpt;
 
 #[derive(StructOpt)]

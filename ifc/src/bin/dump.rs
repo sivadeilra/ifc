@@ -9,7 +9,7 @@ use structopt::StructOpt;
 use zerocopy::{AsBytes, FromBytes, LayoutVerified};
 use anyhow::Result;
 
-use ripper::*;
+use ifc::*;
 
 #[derive(StructOpt)]
 struct Options {

@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "ripper",
     "c_macros",
+    "ifc",
     "gen_rust",
 ]
