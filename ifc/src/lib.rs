@@ -237,7 +237,7 @@ impl Ifc {
         }
 
         let file_header = read_struct_at::<FileHeader>(&fs[4..])?;
-        println!("File header: {:#?}", file_header);
+        // println!("File header: {:#?}", file_header);
 
         let strings_range = file_header.string_table_bytes as usize
             ..file_header.string_table_bytes as usize + file_header.string_table_size as usize;
@@ -475,6 +475,60 @@ impl Ifc {
                 Ok(ft.basis == TypeBasis::NAMESPACE)
             }
             _ => Ok(false),
+        }
+    }
+
+    pub fn is_bool_type(&self, ty: TypeIndex) -> Result<bool> {
+        match ty.tag() {
+            TypeSort::FUNDAMENTAL => {
+                let ft = self.type_fundamental().entry(ty.index())?;
+                Ok(ft.basis == TypeBasis::BOOL)
+            }
+            _ => Ok(false)
+        }
+    }
+
+    pub fn remove_qualifiers(&self, ty: TypeIndex) -> Result<TypeIndex> {
+        let mut cur_ty = ty;
+        while cur_ty.tag() == TypeSort::QUALIFIED {
+            let qt = self.type_qualified().entry(cur_ty.index())?;
+            cur_ty = qt.unqualified_type;
+        }
+        Ok(cur_ty)
+    }
+
+    /// Returns `true` if the type is qualified with `const`.
+    /// This _does not_ recursively search all types (i.e. pointers).
+    ///
+    /// Returns `true` for these:
+    /// * `const int`
+    /// * `int const`
+    /// * `const volatile int`
+    /// * `const int*`
+    /// * `const int&`
+    ///
+    /// Returns `false` for these:
+    /// * `int* const`
+    pub fn is_const_qualified(&self, ty: TypeIndex) -> Result<bool> {
+        let mut cur_ty = ty;
+        loop {
+            if cur_ty.tag() == TypeSort::QUALIFIED {
+                let qt = self.type_qualified().entry(cur_ty.index())?;
+                if qt.qualifiers.contains(Qualifiers::CONST) {
+                    return Ok(true);
+                }
+                cur_ty = qt.unqualified_type;
+            } else {
+                return Ok(false);
+            }
+        }
+    }
+
+    pub fn is_literal_expr(&self, expr: ExprIndex) -> Result<bool> {
+        if expr.tag() == ExprSort::LITERAL {
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 }

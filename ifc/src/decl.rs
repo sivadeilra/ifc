@@ -84,6 +84,23 @@ bitflags! {
     }
 }
 
+/// DeclSort::VARIABLE
+/// `decl.variable`
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct DeclVar {
+    pub name: NameIndex,
+    pub locus: SourceLocation,
+    pub ty: TypeIndex,
+    pub home_scope: DeclIndex,
+    pub initializer: ExprIndex,
+    pub alignment: ExprIndex,
+    pub traits: ObjectTraits,
+    pub specifier: BasicSpecifiers,
+    pub access: Access,
+    pub properties: ReachableProperties,
+}
+
 // "decl.alias"
 #[repr(C)]
 #[derive(AsBytes, FromBytes, Clone, Debug)]

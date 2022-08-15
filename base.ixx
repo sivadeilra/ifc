@@ -32,6 +32,8 @@ export namespace cookie::wookie {
 
 typedef unsigned long long FAVORITE_INT;
 
+export constexpr unsigned long long BIG_NUMBER = 0x4c00'0000'0000ULL;
+
 export enum class ZorbaEnumClass : FAVORITE_INT {
     A = 10,
     B = 20,

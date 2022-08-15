@@ -1,6 +1,7 @@
 use super::*;
 use core::mem::size_of;
 use anyhow::Result;
+use log::debug;
 
 // Partition
 
@@ -87,10 +88,11 @@ where
     vec.resize_with(num_records, new_zeroed);
 
     if expected_record_size == record_size {
-        println!(
+        debug!(
             "loading partition {}, {} records, exact size",
             part_name, num_records
         );
+
         vec.as_bytes_mut()
             .copy_from_slice(&part_data[..num_records * record_size]);
     } else if expected_record_size < record_size {
@@ -131,6 +133,7 @@ part_info! {
     decl_field, "decl.field", DeclField;
     decl_enum, "decl.enum", DeclEnum;
     decl_enumerator, "decl.enumerator", DeclEnumerator;
+    decl_var, "decl.variable", DeclVar;
 
     heap_type, "heap.type", TypeIndex;
     scope_desc, "scope.desc", ScopeDescriptor;
@@ -140,12 +143,15 @@ part_info! {
     type_pointer, "type.pointer", TypeIndex;
     type_qualified, "type.qualified", QualifiedType;
     type_tuple, "type.tuple", TupleType;
+    type_array, "type.array", TypeArray;
     name_source_file, "name.source-file", NameSourceFile;
     command_line, "command_line", TextOffset;
 
     expr_literal, "expr.literal", ExprLiteral;
-    const_i64, "const_i64", u64;
-    const_f64, "const_f64", ConstF64;
+    expr_dyad, "expr.dyad", ExprDyad;
+
+    const_i64, "const.i64", u64;
+    const_f64, "const.f64", ConstF64;
 
     // Attributes using AttrSort::Basic
     attr_basic, "attr.basic", Word;

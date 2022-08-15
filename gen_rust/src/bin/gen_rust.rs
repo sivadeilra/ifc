@@ -13,9 +13,7 @@ struct Options {
 
 fn main() -> Result<()> {
     let cli_options = Options::from_args();
-
-    let gen_options = gen_rust::Options {};
-
+    let gen_options = gen_rust::Options::default();
     let ifc = Ifc::from_file(std::path::Path::new(&cli_options.ifc))?;
 
     let tokens = gen_rust::gen_rust(&ifc, &gen_options)?;

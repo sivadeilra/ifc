@@ -195,3 +195,11 @@ impl Ifc {
         }
     }
 }
+
+/// Partition `type.array`
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct TypeArray {
+    pub element: TypeIndex,
+    pub extent: ExprIndex,
+}

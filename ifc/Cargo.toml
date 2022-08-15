@@ -10,3 +10,4 @@ c_macros = { path = "../c_macros" }
 structopt = "*"
 zerocopy = "0.5"
 zerocopy-derive = "0.3"
+log = "0.4.17"
