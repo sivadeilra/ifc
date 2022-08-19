@@ -14,7 +14,7 @@ macro_rules! tagged_index {
             pub fn tag(self) -> $tag_ty {
                 const TAG_BITS: usize = $tag_bits;
                 const TAG_MASK: u32 = (1u32 << TAG_BITS) - 1;
-                $tag_ty(self.0 & TAG_MASK)
+                $tag_ty::from_u32(self.0 & TAG_MASK)
             }
 
             pub fn index(self) -> u32 {
@@ -34,7 +34,6 @@ macro_rules! tagged_index {
 #[macro_export]
 macro_rules! nyi {
     () => {
-
         println!("{}:{} >>> not yet implemented", file!(), line!());
     }
 }

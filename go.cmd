@@ -1,7 +1,7 @@
 @echo off
 
 
-cargo build --bin dump
+cargo build --bin ifcdump
 if errorlevel 1 exit /b
 
 
@@ -17,5 +17,6 @@ if errorlevel 1 exit /b
 
 dir out
 
-target\debug\dump.exe out\base_mod.ifc > o.txt
+rem target\debug\ifcdump.exe out\base_mod.ifc > o.txt
+target\debug\ifcdump.exe windows.h.ifc --functions --where rgn > o.txt
 code o.txt

@@ -188,17 +188,20 @@ tagged_index! {
 #[repr(C)]
 #[derive(AsBytes, FromBytes, Clone, Debug)]
 pub struct DeclFunc {
-    pub name: NameIndex,                 // 0
-    pub locus: SourceLocation,           // 4
-    pub type_: TypeIndex,                // 12
-    pub home_scope: DeclIndex,           // 16
-    pub chart: ChartIndex,               // 20
-    pub traits: FunctionTraits,          // 24
-    pub specifiers: BasicSpecifiers,     // 26
-    pub access: Access,                  // 27
-    pub properties: ReachableProperties, // 28
-    pub padding: [u8; 3],                // 29
+    pub name: NameIndex,
+    pub locus: SourceLocation,
+    pub type_: TypeIndex,
+    pub home_scope: DeclIndex,
+    pub chart: ChartIndex,
+    pub traits: FunctionTraits,
+    pub specifiers: BasicSpecifiers,
+    pub access: Access,
+    pub properties: ReachableProperties,
+    pub padding: [u8; 3],
 }
+
+// "decl.method"
+pub type DeclMethod = DeclFunc;
 
 bitflags! {
     #[derive(FromBytes, AsBytes)]

@@ -13,6 +13,8 @@ use std::collections::HashSet;
 use syn::Ident;
 use syn::*;
 
+mod pp;
+
 #[derive(Clone, Debug)]
 pub struct Options {
     /// Derive Debug impls for types, by default
@@ -59,6 +61,7 @@ pub fn gen_rust(ifc: &Ifc, options: &Options) -> Result<TokenStream> {
     let mut output = TokenStream::new();
     output.extend(gen.gen_crate_start()?);
     output.extend(gen.gen_types()?);
+    output.extend(gen.gen_macros()?);
     Ok(output)
 }
 

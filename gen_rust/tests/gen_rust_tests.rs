@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod enums;
+mod headers;
 mod vars;
 
 // It's a bit strange that we read this environment variable at compilation time.

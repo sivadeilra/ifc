@@ -1,6 +1,6 @@
 use super::*;
-use core::mem::size_of;
 use anyhow::Result;
+use core::mem::size_of;
 use log::debug;
 
 // Partition
@@ -85,7 +85,7 @@ where
     let mut vec: Vec<T> = Vec::with_capacity(num_records);
 
     // TODO: Use zerocopy support to efficiently zero-extend this.
-    vec.resize_with(num_records, new_zeroed);
+    vec.resize_with(num_records, T::new_zeroed);
 
     if expected_record_size == record_size {
         debug!(
@@ -119,7 +119,7 @@ where
             .chunks_exact_mut(expected_record_size)
             .zip(part_data.chunks_exact(record_size))
         {
-            dst[..expected_record_size].copy_from_slice(src);
+            dst[..record_size].copy_from_slice(src);
         }
     }
 
@@ -129,6 +129,7 @@ where
 part_info! {
     decl_alias, "decl.alias", DeclAlias;
     decl_function, "decl.function", DeclFunc;
+    decl_method, "decl.method", DeclMethod;
     decl_scope, "decl.scope", DeclScope;
     decl_field, "decl.field", DeclField;
     decl_enum, "decl.enum", DeclEnum;
@@ -136,6 +137,10 @@ part_info! {
     decl_var, "decl.variable", DeclVar;
 
     heap_type, "heap.type", TypeIndex;
+
+    // TODO: What's up with this?
+    heap_form, "heap.pp", FormIndex;
+
     scope_desc, "scope.desc", ScopeDescriptor;
     scope_member, "scope.member", DeclIndex;
     type_function, "type.function", FunctionType;
@@ -144,6 +149,10 @@ part_info! {
     type_qualified, "type.qualified", QualifiedType;
     type_tuple, "type.tuple", TupleType;
     type_array, "type.array", TypeArray;
+    type_designated, "type.designated", DeclIndex;
+    type_lvalue_reference, "type.lvalue-reference", TypeIndex;
+    type_rvalue_reference, "type.rvalue-reference", TypeIndex;
+
     name_source_file, "name.source-file", NameSourceFile;
     command_line, "command_line", TextOffset;
 
@@ -152,6 +161,24 @@ part_info! {
 
     const_i64, "const.i64", u64;
     const_f64, "const.f64", ConstF64;
+
+    macro_function_like, "macro.function-like", MacroFunctionLike;
+    macro_object_like, "macro.object-like", MacroObjectLike;
+
+    pp_ident, "pp.ident", FormIdentifier;
+    pp_char, "pp.char", FormCharacter;
+    pp_string, "pp.string", FormString;
+    pp_op, "pp.op", FormOperator;
+    pp_num, "pp.num", FormNumber;
+    pp_keyword, "pp.key", FormKeyword;
+    pp_param, "pp.param", FormParameter;
+    pp_stringize, "pp.to-string", FormStringize;
+    pp_catenate, "pp.catenate", FormCatenate;
+    pp_header, "pp.header", FormHeader;
+    pp_paren, "pp.paren", FormParen;
+    pp_tuple, "pp.tuple", FormTuple;
+    pp_junk, "pp.junk", FormJunk;
+    pp_pragma, "pp.pragma", FormPragma;
 
     // Attributes using AttrSort::Basic
     attr_basic, "attr.basic", Word;

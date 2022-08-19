@@ -3,6 +3,7 @@
 #![allow(unused_variables)]
 #![allow(dead_code)]
 #![allow(unused_imports)]
+#![forbid(unsafe_code)]
 
 use anyhow::{bail, Result};
 use core::mem::size_of;
@@ -16,21 +17,26 @@ mod macros;
 mod decl;
 mod error;
 mod expr;
+mod names;
+mod ops;
 mod parts;
+mod pp;
 mod types;
 mod words;
-mod zerocopy_utils;
 
 use bitflags::bitflags;
 use c_macros::c_enum;
 use core::fmt::{Debug, Formatter};
 use error::*;
-use zerocopy_utils::*;
+use pp::*;
 
 pub use decl::*;
 pub use error::*;
 pub use expr::*;
+pub use names::*;
+pub use ops::*;
 pub use parts::*;
+pub use pp::*;
 pub use types::*;
 pub use words::*;
 
@@ -152,7 +158,6 @@ pub struct ScopeDescriptor {
 
 pub type StmtIndex = u32; // heap.stmt
 pub type SyntaxIndex = u32; // heap.syn
-pub type FormIndex = u32; // heap.form
 pub type ChartIndex = u32; // heap.chart
 
 // Chapter 15
@@ -175,7 +180,7 @@ fn read_struct_at<T: AsBytes + FromBytes>(s: &[u8]) -> Result<T> {
     if core::mem::size_of::<T>() > s.len() {
         bail!("structure is larger than input slice");
     }
-    let mut value: T = unsafe { core::mem::zeroed::<T>() };
+    let mut value: T = T::new_zeroed();
     value.as_bytes_mut().copy_from_slice(&s[..size_of::<T>()]);
     Ok(value)
 }
@@ -324,6 +329,19 @@ impl Ifc {
         .get_string(text_offset)
     }
 
+    pub fn get_name_string(&self, name: NameIndex) -> Result<&str> {
+        Ok(match name.tag() {
+            NameSort::LITERAL => self.get_string(name.index())?,
+            NameSort::CONVERSION => "?CONVERSION",
+            NameSort::GUIDE => "?GUIDE",
+            NameSort::IDENTIFIER => self.get_string(name.index())?,
+            NameSort::OPERATOR => "?OPERATOR",
+            NameSort::SOURCE_FILE => "?SOURCE_FILE",
+            NameSort::TEMPLATE => "?TEMPLATE",
+            _ => "???NameSort",
+        })
+    }
+
     /*
     pub fn get_part_by_name_opt<'a, 'p>(&'a self, name: &'p str) -> Option<Part<'a>> {
         match self.parts_map.get(name) {
@@ -379,11 +397,30 @@ impl Ifc {
         Ok(match type_index.tag() {
             TypeSort::FUNCTION => {
                 let type_function_part = self.type_function();
-                let type_func: &FunctionType = type_function_part.entry(type_index.index())?;
+                let type_func = type_function_part.entry(type_index.index())?;
 
-                let source_type_str = self.get_type_string(type_func.source)?;
                 let target_type_str = self.get_type_string(type_func.target)?;
-                let mut s = format!("return({}) args({})", target_type_str, source_type_str);
+                let mut s = String::with_capacity(80);
+                s.push_str(&target_type_str);
+
+                match type_func.convention {
+                    CallingConvention::Cdecl => s.push_str(" __cdecl "),
+                    CallingConvention::Std => s.push_str(" __stdcall "),
+                    CallingConvention::This => s.push_str(" __thiscall "),
+                    CallingConvention::Vector => s.push_str(" __vectorcall "),
+                    CallingConvention::Fast => s.push_str(" __fastcall "),
+                    _ => {
+                        write!(s, "{:?}", type_func.convention).unwrap();
+                    }
+                }
+
+                if type_func.source.0 != 0 {
+                    // it will have a ()
+                    s.push_str(&self.get_type_string(type_func.source)?);
+                } else {
+                    s.push_str("()");
+                }
+
                 let noexcept_str = match type_func.eh_spec.sort {
                     NoexceptSort::NONE => "",
                     NoexceptSort::FALSE => "noexcept(false)",
@@ -393,14 +430,15 @@ impl Ifc {
                     NoexceptSort::UNENFORCED => "noexcept(unenforced)",
                     _ => "??",
                 };
-                s.push_str(" ");
-                s.push_str(noexcept_str);
+                if !noexcept_str.is_empty() {
+                    s.push_str(" ");
+                    s.push_str(noexcept_str);
+                }
                 s
             }
 
             TypeSort::FUNDAMENTAL => {
                 let type_fundamental = self.type_fundamental().entry(type_index.index())?;
-                // format!("{:?}", type_fundamental)
                 match type_fundamental.basis {
                     TypeBasis::VOID => "void",
                     TypeBasis::BOOL => "bool",
@@ -464,6 +502,49 @@ impl Ifc {
                 pointee_type_str
             }
 
+            TypeSort::LVALUE_REFERENCE => {
+                let pointee_type: TypeIndex =
+                    *self.type_lvalue_reference().entry(type_index.index())?;
+                let mut pointee_type_str = self.get_type_string(pointee_type)?;
+                pointee_type_str.push_str("&");
+                pointee_type_str
+            }
+
+            TypeSort::RVALUE_REFERENCE => {
+                let pointee_type: TypeIndex =
+                    *self.type_rvalue_reference().entry(type_index.index())?;
+                let mut pointee_type_str = self.get_type_string(pointee_type)?;
+                pointee_type_str.push_str("&&");
+                pointee_type_str
+            }
+
+            TypeSort::DESIGNATED => {
+                let designated_type: DeclIndex =
+                    *self.type_designated().entry(type_index.index())?;
+                match designated_type.tag() {
+                    DeclSort::SCOPE => {
+                        let scope = self.decl_scope().entry(designated_type.index())?;
+                        let scope_name = self.get_name_string(scope.name)?;
+                        scope_name.to_string()
+                    }
+
+                    DeclSort::ENUMERATION => {
+                        let en = self.decl_enum().entry(designated_type.index())?;
+                        let en_name = self.get_string(en.name)?;
+                        en_name.to_string()
+                    }
+
+                    DeclSort::ALIAS => {
+                        let alias = self.decl_alias().entry(designated_type.index())?;
+                        self.get_string(alias.name)?.to_string()
+                    }
+
+                    _ => {
+                        format!("{:?}", designated_type)
+                    }
+                }
+            }
+
             _ => format!("{:?}", type_index),
         })
     }
@@ -484,7 +565,7 @@ impl Ifc {
                 let ft = self.type_fundamental().entry(ty.index())?;
                 Ok(ft.basis == TypeBasis::BOOL)
             }
-            _ => Ok(false)
+            _ => Ok(false),
         }
     }
 

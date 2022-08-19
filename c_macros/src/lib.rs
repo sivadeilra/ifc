@@ -241,6 +241,10 @@ pub fn c_enum(
         impl #en_ident {
             pub const fn zero() -> #en_ident { #en_ident(0) }
 
+            pub const fn from_u32(n: u32) -> Self {
+                #en_ident(n as #storage)
+            }
+
             #const_defs
             #is_valid_method
         }
