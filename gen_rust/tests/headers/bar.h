@@ -8,7 +8,7 @@
 
 #endif
 
-int bar(FooStuff* foo);
+int bar(FooStuff* foo, FooId_t id, FooFlavor flavor);
 
 struct BarState {
     int puppies;

@@ -641,6 +641,16 @@ impl Ifc {
         }
     }
 
+    pub fn is_void_type(&self, ty: TypeIndex) -> Result<bool> {
+        match ty.tag() {
+            TypeSort::FUNDAMENTAL => {
+                let ft = self.type_fundamental().entry(ty.index())?;
+                Ok(ft.basis == TypeBasis::VOID)
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub fn remove_qualifiers(&self, ty: TypeIndex) -> Result<TypeIndex> {
         let mut cur_ty = ty;
         while cur_ty.tag() == TypeSort::QUALIFIED {

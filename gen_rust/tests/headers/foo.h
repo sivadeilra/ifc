@@ -25,11 +25,20 @@
 
 #endif
 
+typedef unsigned int FooId_t;
+
 struct FooStuff {
+    FooId_t id;
     int a;
     int b;
     float c;
 };
 
-int get_foo();
+enum FooFlavor {
+    Reversi,
+    Mocha,
+    HighGround,
+};
+
+int get_foo(FooId_t id);
 void set_foo(int x);
