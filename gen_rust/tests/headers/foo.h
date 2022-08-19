@@ -1,5 +1,4 @@
 
-#if 0
 #define FOO_A 10
 #define FOO_B 20
 
@@ -23,9 +22,11 @@
 
 #define FOO_DECREMENT(f) ((f)->a--)
 
-#endif
-
 typedef unsigned int FooId_t;
+
+__interface IWhatever {
+    virtual void whatever() = 0;
+};
 
 struct FooStuff {
     FooId_t id;
@@ -38,6 +39,16 @@ enum FooFlavor {
     Reversi,
     Mocha,
     HighGround,
+};
+
+class Bassy {
+    public:
+    int count;
+};
+
+class Classy : public Bassy, public IWhatever {
+    public:
+    float klass;
 };
 
 int get_foo(FooId_t id);

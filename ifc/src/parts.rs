@@ -1,7 +1,7 @@
 use super::*;
 use anyhow::Result;
 use core::mem::size_of;
-use log::debug;
+use log::{debug, trace};
 
 // Partition
 
@@ -88,9 +88,10 @@ where
     vec.resize_with(num_records, T::new_zeroed);
 
     if expected_record_size == record_size {
-        debug!(
+        trace!(
             "loading partition {}, {} records, exact size",
-            part_name, num_records
+            part_name,
+            num_records
         );
 
         vec.as_bytes_mut()
@@ -144,6 +145,7 @@ part_info! {
 
     scope_desc, "scope.desc", ScopeDescriptor;
     scope_member, "scope.member", DeclIndex;
+    type_base, "type.base", TypeBase;
     type_function, "type.function", FunctionType;
     type_fundamental, "type.fundamental", FundamentalType;
     type_pointer, "type.pointer", TypeIndex;

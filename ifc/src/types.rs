@@ -12,6 +12,12 @@ tagged_index! {
     }
 }
 
+impl TypeIndex {
+    pub const fn is_null(self) -> bool {
+        self.0 == 0
+    }
+}
+
 #[c_enum(storage = "u32")]
 pub enum TypeSort {
     VENDOR_EXTENSION = 0x00,
@@ -98,6 +104,23 @@ pub enum TypeSign {
     PLAIN,
     SIGNED,
     UNSIGNED,
+}
+
+/// `type.base`
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct TypeBase {
+    pub ty: TypeIndex,
+    pub access: Access,
+    pub specifiers: BaseTypeSpecifiers,
+    pub __padding: [u8; 2],
+}
+
+#[c_enum(storage = "u8")]
+pub enum BaseTypeSpecifiers {
+    NONE = 0,
+    SHARED = 1,
+    EXPANDED = 2,
 }
 
 // 9.1.11

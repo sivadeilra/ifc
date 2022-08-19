@@ -439,7 +439,7 @@ impl Ifc {
                 }
 
                 s.push('(');
-                if type_func.source.0 != 0 {
+                if !type_func.source.is_null() {
                     s.push_str(&self.get_type_string(type_func.source)?);
                 }
                 s.push(')');
@@ -687,12 +687,8 @@ impl Ifc {
         }
     }
 
-    pub fn is_literal_expr(&self, expr: ExprIndex) -> Result<bool> {
-        if expr.tag() == ExprSort::LITERAL {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+    pub fn is_literal_expr(&self, expr: ExprIndex) -> bool {
+        expr.tag() == ExprSort::LITERAL
     }
 
     pub fn get_literal_expr_u32(&self, expr: ExprIndex) -> Result<u32> {
@@ -711,6 +707,58 @@ impl Ifc {
                 "Expr is expected to be an integer literal, but is not: {:?}",
                 literal
             ),
+        }
+    }
+
+    /// Iterates a single type index, or a tuple of type indexes.
+    ///
+    /// Many fields point to a single type, or point to a TypeSort::TUPLE which contains a tuple
+    /// of types.  This simplifies enumerating them.
+    pub fn iter_type_tuple(&self, ty: TypeIndex) -> Result<IterTypeTuple<'_>> {
+        if ty.is_null() {
+            return Ok(IterTypeTuple {
+                single: None,
+                tuple: &[],
+            });
+        }
+
+        if ty.tag() == TypeSort::TUPLE {
+            let tuple = self.type_tuple().entry(ty.index())?;
+            let range = tuple.start as usize..tuple.start as usize + tuple.cardinality as usize;
+            if let Some(slice) = self.heap_type().entries.get(range.clone()) {
+                Ok(IterTypeTuple {
+                    single: None,
+                    tuple: slice,
+                })
+            } else {
+                bail!("Invalid tuple slice range: {:?}", range);
+            }
+        } else {
+            Ok(IterTypeTuple {
+                single: Some(ty),
+                tuple: &[],
+            })
+        }
+    }
+}
+
+pub struct IterTypeTuple<'a> {
+    single: Option<TypeIndex>,
+    tuple: &'a [TypeIndex],
+}
+
+impl<'a> Iterator for IterTypeTuple<'a> {
+    type Item = TypeIndex;
+    fn next(&mut self) -> Option<TypeIndex> {
+        if self.single.is_some() {
+            return self.single.take();
+        }
+        if !self.tuple.is_empty() {
+            let result = self.tuple[0];
+            self.tuple = &self.tuple[1..];
+            Some(result)
+        } else {
+            None
         }
     }
 }
