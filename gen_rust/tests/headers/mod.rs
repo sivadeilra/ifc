@@ -15,7 +15,9 @@ fn headers_test() {
     cl.arg("bar.h");
     c.spawn_and_wait(cl);
 
-    c.read_ifc_compile_to_rust("bar.h.ifc", "bar_h");
+    c.read_ifc_compile_to_rust(&[], "foo.h.ifc", "foo");
+
+    c.read_ifc_compile_to_rust(&[("foo", "foo.h.ifc")], "bar.h.ifc", "bar");
 
     /*
     c.write_file("main.rs", include_str!("main.rs"));

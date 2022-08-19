@@ -135,6 +135,7 @@ part_info! {
     decl_enum, "decl.enum", DeclEnum;
     decl_enumerator, "decl.enumerator", DeclEnumerator;
     decl_var, "decl.variable", DeclVar;
+    decl_bitfield, "decl.bitfield", DeclBitfield;
 
     heap_type, "heap.type", TypeIndex;
 
@@ -152,6 +153,9 @@ part_info! {
     type_designated, "type.designated", DeclIndex;
     type_lvalue_reference, "type.lvalue-reference", TypeIndex;
     type_rvalue_reference, "type.rvalue-reference", TypeIndex;
+    type_unaligned, "type.unaligned", TypeIndex;
+
+    chart_unilevel, "chart.unilevel", ChartUnilevel;
 
     name_source_file, "name.source-file", NameSourceFile;
     command_line, "command_line", TextOffset;

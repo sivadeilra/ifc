@@ -92,15 +92,27 @@ impl Case {
         std::fs::write(&path, contents).expect("Expected to write file");
     }
 
-    fn read_ifc_compile_to_rust(&self, ifc_filename: &str, rust_crate_name: &str) {
+    fn read_ifc_compile_to_rust(
+        &self,
+        ifc_references: &[(&str, &str)],
+        ifc_filename: &str,
+        rust_crate_name: &str,
+    ) {
         let ifc = self.read_ifc(ifc_filename);
 
         let rust_source_file_name = format!("{}.rs", rust_crate_name);
         let rust_source_path = self.case_tmp_dir.join(&rust_source_file_name);
 
+        let mut symbol_map = gen_rust::SymbolMap::default();
+        for (ref_name, ref_filename) in ifc_references.iter() {
+            let ref_path = self.case_tmp_dir.join(ref_filename);
+            let ref_ifc = self.read_ifc(&ref_path.to_string_lossy());
+            symbol_map.add_ref_ifc(ref_name, &ref_ifc).unwrap();
+        }
+
         let ifc_options = Default::default();
-        let rust_generated_code =
-            gen_rust::gen_rust(&ifc, &ifc_options).expect("Expected gen_rust to succeed");
+        let rust_generated_code = gen_rust::gen_rust(&ifc, symbol_map, &ifc_options)
+            .expect("Expected gen_rust to succeed");
         let rust_tokens_as_file: syn::File = syn::parse2(rust_generated_code)
             .expect("Expected gen_rust to generate well-formed Rust tokens");
         let rust_output_as_string = prettyplease::unparse(&rust_tokens_as_file);

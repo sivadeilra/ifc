@@ -5,11 +5,14 @@
 
 use anyhow::{bail, Result};
 use ifc::*;
+use log::warn;
 use log::{debug, info, trace};
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::*;
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 use syn::Ident;
 use syn::*;
 
@@ -27,8 +30,12 @@ impl Default for Options {
     }
 }
 
+// This is an alias into the `refs` table.
+type RefIndex = usize;
+
 struct Gen<'a> {
     ifc: &'a Ifc,
+    symbol_map: SymbolMap,
     options: &'a Options,
     #[allow(dead_code)]
     wk: WellKnown,
@@ -41,10 +48,122 @@ struct WellKnown {
     tokens_true: TokenStream,
 }
 
+pub struct ReferencedIfc {
+    pub name: String,
+    pub ifc: Arc<Ifc>,
+}
+
+#[derive(Default, Clone)]
+pub struct SymbolMap {
+    pub crates: Vec<String>,
+    pub map: HashMap<String, RefIndex>,
+}
+
+impl SymbolMap {
+    /// Scan through the symbols exported by each of the IFC files.
+    /// Build a table that maps from each symbol name to the index of the IFC file that defines that
+    /// symbol.
+    ///
+    /// If a symbol is exported by more than one Ifc, then just pick the one with the lowest index.
+    /// This is a terrible idea, but it's good enough to start with.
+    ///
+    /// For now, we only process the root scope.  So no nested namespaces.  And we ignore preprocessor
+    /// definitions.
+    pub fn add_ref_ifc(&mut self, ifc_name: &str, ifc: &Ifc) -> Result<RefIndex> {
+        let ifc_index = self.crates.len();
+
+        self.crates.push(ifc_name.to_string());
+
+        let mut num_added: u64 = 0;
+
+        let mut add_symbol = |name: &str| {
+            if let Some(existing_index) = self.map.get_mut(name) {
+                if ifc_index < *existing_index {
+                    *existing_index = ifc_index;
+                }
+            } else {
+                // This is the first time we've seen this symbol. Insert using the current IFC index.
+                self.map.insert(name.to_string(), ifc_index);
+            }
+            num_added += 1;
+        };
+
+        let scope = ifc.global_scope();
+        for member_decl in ifc.iter_scope(scope)? {
+            match member_decl.tag() {
+                DeclSort::SCOPE => {
+                    let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
+                    if ifc.is_type_namespace(nested_scope.ty)? {
+                        // For now, we ignore namespaces.
+                    } else {
+                        // It's a nested struct/class.
+                        if nested_scope.name.tag() == NameSort::IDENTIFIER {
+                            let nested_name = ifc.get_string(nested_scope.name.index())?;
+                            add_symbol(nested_name);
+                        } else {
+                            warn!("ignoring scope member named: {:?}", nested_scope.name);
+                        }
+                    }
+                }
+
+                DeclSort::ALIAS => {
+                    let alias = ifc.decl_alias().entry(member_decl.index())?;
+                    let alias_name = ifc.get_string(alias.name)?;
+                    add_symbol(alias_name);
+                }
+
+                DeclSort::ENUMERATION => {
+                    let en = ifc.decl_enum().entry(member_decl.index())?;
+                    let en_name = ifc.get_string(en.name)?;
+                    add_symbol(en_name);
+                }
+
+                DeclSort::INTRINSIC => {}
+                DeclSort::TEMPLATE => {}
+                DeclSort::EXPLICIT_INSTANTIATION => {}
+                DeclSort::EXPLICIT_SPECIALIZATION => {}
+
+                DeclSort::FUNCTION => {
+                    let func_decl = ifc.decl_function().entry(member_decl.index())?;
+                    match func_decl.name.tag() {
+                        NameSort::IDENTIFIER => {
+                            let func_name = ifc.get_string(func_decl.name.index())?;
+                            add_symbol(func_name);
+                        }
+                        _ => {
+                            warn!("ignoring function named: {:?}", func_decl.name);
+                        }
+                    }
+                }
+
+                _ => {
+                    warn!("ignoring unrecognized scope member: {:?}", member_decl);
+                }
+            }
+        }
+
+        info!(
+            "Number of symbols added for this IFC '{}': #{} {}",
+            ifc_name, ifc_index, num_added
+        );
+        Ok(ifc_index)
+    }
+
+    pub fn is_symbol_in(&self, name: &str) -> bool {
+        self.map.contains_key(name)
+    }
+
+    pub fn resolve(&self, name: &str) -> Option<&str> {
+        let crate_index = *self.map.get(name)?;
+        Some(self.crates[crate_index].as_str())
+    }
+}
+
 impl<'a> Gen<'a> {
-    fn new(ifc: &'a Ifc, options: &'a Options) -> Self {
+    fn new(ifc: &'a Ifc, symbol_map: SymbolMap, options: &'a Options) -> Self {
         Self {
             ifc,
+            symbol_map: symbol_map,
             options,
             wk: WellKnown {
                 tokens_empty: quote!(),
@@ -55,8 +174,8 @@ impl<'a> Gen<'a> {
     }
 }
 
-pub fn gen_rust(ifc: &Ifc, options: &Options) -> Result<TokenStream> {
-    let gen = Gen::new(ifc, options);
+pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<TokenStream> {
+    let gen = Gen::new(ifc, symbol_map, options);
 
     let mut output = TokenStream::new();
     output.extend(gen.gen_crate_start()?);
@@ -102,8 +221,19 @@ impl<'a> Gen<'a> {
 
         let _max_depth = max_depth - 1;
 
-        let scope_members = self.ifc.scope_member();
+        // Add "extern crate foo;" declarations.
+        for name in self.symbol_map.crates.iter() {
+            let crate_ident = Ident::new(name, Span::call_site());
+            output.extend(quote!{
+                extern crate #crate_ident;
+            });
+        }
 
+        let mut alias_defs = TokenStream::new();
+        let mut extern_c_funcs = TokenStream::new();
+        let mut struct_defs = TokenStream::new();
+
+        let scope_members = self.ifc.scope_member();
         for member_index in
             scope_descriptor.start..scope_descriptor.start + scope_descriptor.cardinality
         {
@@ -113,56 +243,112 @@ impl<'a> Gen<'a> {
                 DeclSort::ALIAS => {
                     let decl_alias = self.ifc.decl_alias().entry(member_decl_index.index())?;
                     let alias_name = self.ifc.get_string(decl_alias.name)?;
-                    info!("    alias: {}", alias_name);
-                    info!("{:#?}", decl_alias);
+
+                    if self.symbol_map.is_symbol_in(alias_name) {
+                        debug!("alias {} is defined in external crate", alias_name);
+                    } else {
+                        debug!("alias {} - adding", alias_name);
+                        let alias_ident = syn::Ident::new(alias_name, Span::call_site());
+                        alias_defs.extend(quote! {
+                            pub type #alias_ident = ();
+                        });
+                    }
                 }
 
                 DeclSort::FUNCTION => {
                     let func_decl = self.ifc.decl_function().entry(member_decl_index.index())?;
-                    let _func_name = match func_decl.name.tag() {
+                    match func_decl.name.tag() {
                         NameSort::IDENTIFIER => {
-                            self.ifc.get_string(func_decl.name.index())?.to_string()
-                        }
-                        _ => format!("{:?}", func_decl.name),
-                    };
+                            let func_name = self.ifc.get_string(func_decl.name.index())?;
 
-                    let _type_str = self.ifc.get_type_string(func_decl.type_)?;
+                            if self.symbol_map.is_symbol_in(func_name) {
+                                debug!("function {} - defined in external crate", func_name);
+                            } else {
+                                let func_ident = syn::Ident::new(func_name, Span::call_site());
+                                extern_c_funcs.extend(quote! {
+                                    pub fn #func_ident();
+                                });
+                            }
+
+                            // let _type_str = self.ifc.get_type_string(func_decl.type_)?;
+                        }
+                        _ => {
+                            // For now, we ignore all other kinds of functions.
+                            debug!("ignoring function named {:?}", func_decl.name);
+                        }
+                    };
                 }
 
                 DeclSort::SCOPE => {
                     let nested_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
-                    // let nested_scope_name = ifc.get_string(nested_scope.name.index())?;
 
                     // What kind of scope is it?
                     if self.ifc.is_type_namespace(nested_scope.ty)? {
-                        // info!("    namespace {} {{ ... }}", nested_scope_name);
+                        // We do not yet process namespaces.
                     } else {
-                        // info!(
-                        //     "    nested scope: name: {:#?} - {:?}",
-                        //     nested_scope_name, nested_scope.ty
-                        // );
+                        // It's a nested struct/class.
+                        let nested_scope_name = self.ifc.get_string(nested_scope.name.index())?;
+                        if nested_scope.initializer != 0 {
+                            if self.symbol_map.is_symbol_in(nested_scope_name) {
+                                debug!("struct {} - defined in external crate", nested_scope_name);
+                            } else {
+                                // Emit the definition for this struct.
+
+                                debug!("struct {} - emitting", nested_scope_name);
+                                let mut struct_contents = TokenStream::new();
+                                for member_decl in self.ifc.iter_scope(nested_scope.initializer)? {
+                                    match member_decl.tag() {
+                                        DeclSort::FIELD => {
+                                            let field_decl =
+                                                self.ifc.decl_field().entry(member_decl.index())?;
+                                            let field_name =
+                                                self.ifc.get_string(field_decl.name)?;
+                                            let field_ident =
+                                                syn::Ident::new(field_name, Span::call_site());
+                                            let field_type_tokens =
+                                                self.get_type_tokens(field_decl.ty)?;
+
+                                            struct_contents.extend(
+                                                quote! { pub #field_ident: #field_type_tokens, },
+                                            );
+                                        }
+
+                                        _ => {
+                                            // Ignore everything else, for now.
+                                        }
+                                    }
+                                }
+
+                                let struct_ident =
+                                    syn::Ident::new(nested_scope_name, Span::call_site());
+
+                                struct_defs.extend(quote! {
+                                    #[repr(C)]
+                                    pub struct #struct_ident {
+                                        #struct_contents
+                                    }
+                                });
+                            }
+                        } else {
+                            // This struct has a forward declaration but no definition,
+                            // e.g. "struct FOO;".  Not sure what to do about that, yet.
+                            debug!("struct {} - ignoring forward decl", nested_scope_name);
+                        }
                     }
-
-                    // info!("{:#?}", nested_scope);
-
-                    // if scope.initializer != 0 {
-                    //     dump_scope(ifc, scope.initializer, max_depth)?;
-                    // }
-                }
-
-                DeclSort::FIELD => {
-                    let field = self.ifc.decl_field().entry(member_decl_index.index())?;
-                    let field_name = self.ifc.get_string(field.name)?;
-                    let field_type_string = self.ifc.get_type_string(field.ty)?;
-                    info!("    field: {} : {}", field_name, field_type_string);
                 }
 
                 DeclSort::METHOD => {}
 
                 DeclSort::ENUMERATION => {
                     let en = self.ifc.decl_enum().entry(member_decl_index.index())?;
-                    let t = self.gen_enum(&en)?;
-                    output.extend(t);
+                    let en_name = self.ifc.get_string(en.name)?;
+                    if self.symbol_map.is_symbol_in(en_name) {
+                        debug!("enum {} - defined in external crate", en_name);
+                    } else {
+                        debug!("enum {} - emitting", en_name);
+                        let t = self.gen_enum(&en)?;
+                        output.extend(t);
+                    }
                 }
 
                 DeclSort::VARIABLE => {
@@ -176,6 +362,14 @@ impl<'a> Gen<'a> {
                 }
             }
         }
+
+        output.extend(alias_defs);
+        output.extend(quote! {
+            extern "C" {
+                #extern_c_funcs
+            }
+        });
+        output.extend(struct_defs);
 
         Ok(output)
     }
@@ -329,6 +523,46 @@ impl<'a> Gen<'a> {
 
                 quote! {
                     [#element_tokens; #extent_tokens]
+                }
+            }
+
+            TypeSort::DESIGNATED => {
+                let desig_decl = self.ifc.type_designated().entry(type_index.index())?;
+                let desig_name: &str = match desig_decl.tag() {
+                    DeclSort::SCOPE => {
+                        let scope_decl = self.ifc.decl_scope().entry(desig_decl.index())?;
+                        match scope_decl.name.tag() {
+                            NameSort::IDENTIFIER => self.ifc.get_string(scope_decl.name.index())?,
+                            _ => todo!(
+                                "designated type {:?} references unrecognized name {:?}",
+                                desig_decl,
+                                scope_decl.name
+                            ),
+                        }
+                    }
+
+                    DeclSort::ENUMERATION => {
+                        let enum_decl = self.ifc.decl_enum().entry(desig_decl.index())?;
+                        self.ifc.get_string(enum_decl.name)?
+                    }
+
+                    DeclSort::ALIAS => {
+                        let alias_decl = self.ifc.decl_alias().entry(desig_decl.index())?;
+                        self.ifc.get_string(alias_decl.name)?
+                    }
+
+                    _ => todo!("unrecognized designated type: {:?}", desig_decl),
+                };
+
+                if let Some(extern_crate) = self.symbol_map.resolve(desig_name) {
+                    // This designated type reference resolves to a name in a dependent crate.
+                    trace!("resolved type to external crate: {}", extern_crate);
+                    let extern_ident = syn::Ident::new(extern_crate, Span::call_site());
+                    let desig_ident = syn::Ident::new(desig_name, Span::call_site());
+                    quote! { #extern_ident :: #desig_ident}
+                } else {
+                    // This designated type references something in this crate.
+                    Ident::new(desig_name, Span::call_site()).to_token_stream()
                 }
             }
 

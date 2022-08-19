@@ -134,7 +134,7 @@ fn dump_scope(
     }
 
     println!(
-        "Scope #{}{}",
+        "// Scope #{}{}",
         parent_scope,
         if parent_scope == ifc.file_header().global_scope {
             " - Global scope"
@@ -216,7 +216,18 @@ fn dump_scope(
                 let field = ifc.decl_field().entry(member_decl_index.index())?;
                 let field_name = ifc.get_string(field.name)?;
                 let field_type_string = ifc.get_type_string(field.ty)?;
-                println!("    field: {} : {}", field_name, field_type_string);
+                println!("    {:-20} {};", field_type_string, field_name);
+            }
+
+            DeclSort::BITFIELD => {
+                let bitfield = ifc.decl_bitfield().entry(member_decl_index.index())?;
+                let bitfield_name = ifc.get_string(bitfield.name)?;
+                let bitfield_type_string = ifc.get_type_string(bitfield.ty)?;
+                let bitfield_width = ifc.get_literal_expr_u32(bitfield.width)?;
+                println!(
+                    "    {:-20} {} : {};",
+                    bitfield_type_string, bitfield_name, bitfield_width
+                );
             }
 
             DeclSort::ENUMERATION => {

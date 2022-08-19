@@ -14,6 +14,7 @@ use zerocopy::{AsBytes, FromBytes, LayoutVerified};
 #[macro_use]
 mod macros;
 
+mod chart;
 mod decl;
 mod error;
 mod expr;
@@ -30,6 +31,7 @@ use core::fmt::{Debug, Formatter};
 use error::*;
 use pp::*;
 
+pub use chart::*;
 pub use decl::*;
 pub use error::*;
 pub use expr::*;
@@ -314,6 +316,28 @@ impl Ifc {
         self.file_header.global_scope
     }
 
+    pub fn iter_scope(&self, scope: ScopeIndex) -> Result<IterScope<'_>> {
+        if scope == 0 {
+            return Ok(IterScope {
+                members: &[],
+                ifc: self,
+            });
+        }
+
+        let scope_desc = self.scope_desc().entry(scope - 1)?;
+
+        if let Some(slice) = self.scope_member().entries.get(
+            scope_desc.start as usize..scope_desc.start as usize + scope_desc.cardinality as usize,
+        ) {
+            Ok(IterScope {
+                members: slice,
+                ifc: self,
+            })
+        } else {
+            bail!("invalid scope member range for scope {}", scope);
+        }
+    }
+
     pub fn file_header(&self) -> &FileHeader {
         &self.file_header
     }
@@ -414,12 +438,11 @@ impl Ifc {
                     }
                 }
 
+                s.push('(');
                 if type_func.source.0 != 0 {
-                    // it will have a ()
                     s.push_str(&self.get_type_string(type_func.source)?);
-                } else {
-                    s.push_str("()");
                 }
+                s.push(')');
 
                 let noexcept_str = match type_func.eh_spec.sort {
                     NoexceptSort::NONE => "",
@@ -444,7 +467,41 @@ impl Ifc {
                     TypeBasis::BOOL => "bool",
                     TypeBasis::CHAR => "char",
                     TypeBasis::WCHAR_T => "wchar_t",
-                    TypeBasis::INT => "int",
+                    TypeBasis::INT => match (type_fundamental.sign, type_fundamental.precision) {
+                        (TypeSign::UNSIGNED, TypePrecision::DEFAULT) => "unsigned int",
+                        (TypeSign::SIGNED, TypePrecision::DEFAULT) => "signed int",
+                        (_, TypePrecision::DEFAULT) => "int",
+
+                        (TypeSign::UNSIGNED, TypePrecision::LONG) => "unsigned long",
+                        (TypeSign::SIGNED, TypePrecision::LONG) => "signed long",
+                        (_, TypePrecision::LONG) => "long",
+
+                        (TypeSign::UNSIGNED, TypePrecision::SHORT) => "unsigned short",
+                        (TypeSign::SIGNED, TypePrecision::SHORT) => "signed short",
+                        (_, TypePrecision::SHORT) => "short",
+
+                        (TypeSign::UNSIGNED, TypePrecision::BIT8) => "unsigned __int8",
+                        (TypeSign::SIGNED, TypePrecision::BIT8) => "signed __int8",
+                        (_, TypePrecision::BIT8) => "__int8",
+
+                        (TypeSign::UNSIGNED, TypePrecision::BIT16) => "unsigned __int16",
+                        (TypeSign::SIGNED, TypePrecision::BIT16) => "signed __int16",
+                        (_, TypePrecision::BIT16) => "__int16",
+
+                        (TypeSign::UNSIGNED, TypePrecision::BIT32) => "unsigned _int32",
+                        (TypeSign::SIGNED, TypePrecision::BIT32) => "signed __int32",
+                        (_, TypePrecision::BIT32) => "__int32",
+
+                        (TypeSign::UNSIGNED, TypePrecision::BIT64) => "unsigned __int64",
+                        (TypeSign::SIGNED, TypePrecision::BIT64) => "signed __int64",
+                        (_, TypePrecision::BIT64) => "__int64",
+
+                        (TypeSign::UNSIGNED, TypePrecision::BIT128) => "unsigned __int128",
+                        (TypeSign::SIGNED, TypePrecision::BIT128) => "signed __int128",
+                        (_, TypePrecision::BIT128) => "__int128",
+
+                        _ => "??int",
+                    },
                     TypeBasis::FLOAT => "float",
                     TypeBasis::DOUBLE => "double",
                     TypeBasis::NULLPTR => "nullptr",
@@ -470,7 +527,6 @@ impl Ifc {
             TypeSort::TUPLE => {
                 let type_tuple = self.type_tuple().entry(type_index.index())?;
                 let mut s = String::new();
-                s.push_str("(");
                 for i in 0..type_tuple.cardinality {
                     if i > 0 {
                         s.push_str(", ");
@@ -478,7 +534,6 @@ impl Ifc {
                     let element_type_index = self.type_heap_lookup(type_tuple.start + i)?;
                     s.push_str(&self.get_type_string(element_type_index)?);
                 }
-                s.push_str(")");
                 s
             }
 
@@ -493,6 +548,12 @@ impl Ifc {
                     s.insert_str(0, "volatile ");
                 }
                 s
+            }
+
+            TypeSort::UNALIGNED => {
+                let target_ty = *self.type_unaligned().entry(type_index.index())?;
+                let s = self.get_type_string(target_ty)?;
+                format!("__unaligned {}", s)
             }
 
             TypeSort::POINTER => {
@@ -542,6 +603,17 @@ impl Ifc {
                     _ => {
                         format!("{:?}", designated_type)
                     }
+                }
+            }
+
+            TypeSort::ARRAY => {
+                let array = self.type_array().entry(type_index.index())?;
+                let element_type_str = self.get_type_string(array.element)?;
+
+                if let Ok(extent) = self.get_literal_expr_u32(array.extent) {
+                    format!("[{}; {}]", element_type_str, extent)
+                } else {
+                    format!("[{}; _]", element_type_str)
                 }
             }
 
@@ -612,6 +684,25 @@ impl Ifc {
             Ok(false)
         }
     }
+
+    pub fn get_literal_expr_u32(&self, expr: ExprIndex) -> Result<u32> {
+        if expr.tag() != ExprSort::LITERAL {
+            bail!("Expr is expected to be a literal, but is not: {:?}", expr);
+        }
+
+        let literal = self.expr_literal().entry(expr.index())?;
+        match literal.value.tag() {
+            LiteralSort::IMMEDIATE => Ok(literal.value.index()),
+            LiteralSort::INTEGER => {
+                let int = *self.const_i64().entry(literal.value.index())?;
+                Ok(int as u32)
+            }
+            _ => bail!(
+                "Expr is expected to be an integer literal, but is not: {:?}",
+                literal
+            ),
+        }
+    }
 }
 
 pub struct Part<'a, T> {
@@ -638,4 +729,23 @@ pub struct PartEntry {
     pub part_range: Range<usize>,
     pub count: usize,
     pub size: usize,
+}
+
+pub struct IterScope<'a> {
+    members: &'a [DeclIndex],
+    ifc: &'a Ifc,
+}
+
+impl<'a> Iterator for IterScope<'a> {
+    type Item = DeclIndex;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.members.is_empty() {
+            return None;
+        }
+        let member = self.members[0];
+        self.members = &self.members[1..];
+
+        Some(member)
+    }
 }

@@ -1,4 +1,5 @@
 
+#if 0
 #define FOO_A 10
 #define FOO_B 20
 
@@ -20,13 +21,15 @@
 
 #define FOO_PAREN     (100)
 
+#define FOO_DECREMENT(f) ((f)->a--)
+
+#endif
+
 struct FooStuff {
     int a;
     int b;
     float c;
 };
-
-#define FOO_DECREMENT(f) ((f)->a--)
 
 int get_foo();
 void set_foo(int x);

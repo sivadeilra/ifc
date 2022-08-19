@@ -235,7 +235,6 @@ pub enum NoexceptSort {
     UNENFORCED,
 }
 
-
 // 8.2
 // "decl.scope"
 #[repr(C)]
@@ -314,3 +313,17 @@ pub struct DeclEnumerator {
     pub __padding: [u8; 2],
 }
 
+#[repr(C)]
+#[derive(AsBytes, FromBytes, Clone, Debug)]
+pub struct DeclBitfield {
+    pub name: TextOffset,
+    pub locus: SourceLocation,
+    pub ty: TypeIndex,
+    pub home_scope: DeclIndex,
+    pub width: ExprIndex,
+    pub initializer: ExprIndex,
+    pub traits: ObjectTraits,
+    pub specifier: BasicSpecifiers,
+    pub access: Access,
+    pub properties: ReachableProperties,
+}

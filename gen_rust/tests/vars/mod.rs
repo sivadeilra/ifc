@@ -5,16 +5,16 @@ fn vars_test() {
     let c = case("vars_test");
     c.compile_cpp("vars_mod.ixx", include_str!("vars_mod.ixx"));
 
-    c.read_ifc_compile_to_rust("vars_mod.ifc", "vars_mod");
+    c.read_ifc_compile_to_rust(&[], "vars_mod.ifc", "vars_mod");
 
-    c.write_file("main.rs", include_str!("main.rs"));
+    c.write_file("checker.rs", include_str!("checker.rs"));
 
     let mut rustc = c.cmd_rustc();
     rustc.arg("--crate-type=bin");
-    rustc.arg("main.rs");
+    rustc.arg("checker.rs");
     c.spawn_and_wait(rustc);
 
-    let main_path = c.case_tmp_dir.join("main");
-    let main = c.cmd(main_path.to_str().unwrap());
-    c.spawn_and_wait(main);
+    let checker_path = c.case_tmp_dir.join("checker");
+    let checker = c.cmd(checker_path.to_str().unwrap());
+    c.spawn_and_wait(checker);
 }
