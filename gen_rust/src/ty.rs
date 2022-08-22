@@ -72,6 +72,9 @@ impl<'a> Gen<'a> {
 
                     TypeBasis::VOID => quote!(core::ffi::c_void),
 
+                    // TODO: obviously bogus
+                    TypeBasis::ELLIPSIS => quote!(core::ffi::c_void),
+
                     _ => todo!("TypeBasis: {:?}", fun_ty.basis),
                 }
             }
@@ -134,7 +137,6 @@ impl<'a> Gen<'a> {
 
                     _ => todo!("unrecognized designated type: {:?}", desig_decl),
                 };
-
 
                 let mut desig_name = desig_name.to_string();
                 fixup_anon_names(&mut desig_name, &mut anon_name_counter);

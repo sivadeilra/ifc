@@ -60,6 +60,7 @@ struct GenOutputs {
     consts: TokenStream,
     statics: TokenStream,
     macros: TokenStream,
+    aliases: TokenStream,
     extern_cdecl: TokenStream,
     extern_stdcall: TokenStream,
     extern_fastcall: TokenStream,
@@ -100,6 +101,15 @@ impl GenOutputs {
                 }
             });
         }
+
+        let aliases = self.aliases;
+        output.extend(quote!{
+            pub mod __typedefs {
+                use super::*;
+                #aliases
+            }
+            pub use __typedefs::*;
+        });
 
         output
     }
@@ -249,7 +259,6 @@ impl<'a> Gen<'a> {
 pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<TokenStream> {
     info!("Global scope: {}", ifc.global_scope());
 
-
     let mut gen = Gen::new(ifc, symbol_map, options);
 
     let mut outputs = GenOutputs::default();
@@ -261,6 +270,7 @@ pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<T
     outputs.macros.extend(gen.gen_macros()?);
     gen.gen_types(&mut outputs)?;
     gen.find_orphans(&mut outputs)?;
+    gen.gen_functions(&mut outputs, ifc.global_scope())?;
     Ok(outputs.finish())
 }
 
@@ -319,7 +329,7 @@ impl<'a> Gen<'a> {
         let mut fixed_name: String = String::with_capacity(100);
 
         let mut anon_name_counter: u32 = 0;
-        let mut overloaded_func_name_counter: u32 = 0;
+        // let mut overloaded_func_name_counter: u32 = 0;
 
         for member_decl in self.ifc.iter_scope(parent_scope)? {
             new_name.clear();
@@ -338,7 +348,7 @@ impl<'a> Gen<'a> {
                             fixed_name.clear();
                             fixed_name.push_str(scope_name);
                             fixup_anon_names(&mut fixed_name, &mut anon_name_counter);
-                            info!(
+                            debug!(
                                 "fixed compiler-generated name: {} -> {}",
                                 scope_name, fixed_name
                             );
@@ -430,7 +440,7 @@ impl<'a> Gen<'a> {
         max_depth: u32,
         _scope_kind: ScopeKind,
     ) -> Result<()> {
-        info!(
+        debug!(
             "Scope #{}{}",
             parent_scope,
             if parent_scope + 1 == self.ifc.file_header().global_scope {
@@ -446,7 +456,6 @@ impl<'a> Gen<'a> {
 
         let _max_depth = max_depth - 1;
 
-        let mut num_errors: u64 = 0;
         let mut counter: u32 = 0;
 
         for member_decl_index in self.ifc.iter_scope(parent_scope)? {
@@ -464,7 +473,7 @@ impl<'a> Gen<'a> {
                             let alias_ident = syn::Ident::new(&alias_name, Span::call_site());
                             let aliasee_tokens = self.get_type_tokens(decl_alias.aliasee)?;
 
-                            outputs.types.extend(quote! {
+                            outputs.aliases.extend(quote! {
                                 pub type #alias_ident = #aliasee_tokens;
                             });
                         }
@@ -472,26 +481,9 @@ impl<'a> Gen<'a> {
                 }
 
                 DeclSort::FUNCTION => {
-                    match self.gen_function(member_decl_index) {
-                        Ok(Some((convention, func_tokens))) => {
-                            // Write the extern function declaration to the right extern "X" { ... } block.
-                            let extern_block = match convention {
-                                CallingConvention::Std => &mut outputs.extern_stdcall,
-                                CallingConvention::Cdecl => &mut outputs.extern_cdecl,
-                                CallingConvention::Fast => &mut outputs.extern_fastcall,
-                                _ => bail!(
-                                    "Function calling convention {:?} is not supported",
-                                    convention
-                                ),
-                            };
-                            extern_block.extend(func_tokens);
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                            num_errors += 1;
-                        }
-                    }
+                    // Functions are processed in a later pass.
                 }
+
                 DeclSort::METHOD => {}
 
                 DeclSort::SCOPE => {
@@ -552,13 +544,50 @@ impl<'a> Gen<'a> {
             }
         }
 
-        if num_errors != 0 {
-            println!("Number of errors during translation: {}", num_errors);
+        Ok(())
+    }
+
+    /// Recursively walks a scope and generates type definitions for it.
+    #[inline(never)]
+    fn gen_functions(&self, outputs: &mut GenOutputs, parent_scope: ScopeIndex) -> Result<()> {
+        let mut names_map: HashMap<Ident, u32> = HashMap::new();
+
+        let mut num_errors: u32 = 0;
+
+        for member in self.ifc.iter_scope(parent_scope)? {
+            match member.tag() {
+                DeclSort::FUNCTION => {
+                    match self.gen_function(member, &mut names_map) {
+                        Ok(Some((convention, func_tokens))) => {
+                            // Write the extern function declaration to the right extern "X" { ... } block.
+                            let extern_block = match convention {
+                                CallingConvention::Std => &mut outputs.extern_stdcall,
+                                CallingConvention::Cdecl => &mut outputs.extern_cdecl,
+                                CallingConvention::Fast => &mut outputs.extern_fastcall,
+                                _ => bail!(
+                                    "Function calling convention {:?} is not supported",
+                                    convention
+                                ),
+                            };
+                            extern_block.extend(func_tokens);
+                        }
+                        Ok(None) => {}
+                        Err(_) => {
+                            num_errors += 1;
+                        }
+                    }
+                }
+
+                _ => {
+                    // Ignore all other decls.
+                }
+            }
         }
 
         Ok(())
     }
 
+    /// Emits a forward declaration for a struct that has no definition at all, e.g. `struct Foo;`
     fn emit_forward_decl_scope(
         &self,
         member_decl_index: DeclIndex,
@@ -614,6 +643,11 @@ pub fn fixup_anon_names(s: &mut String, counter: &mut u32) {
     if s == "<unnamed-tag>" {
         *counter += 1;
         *s = format!("tag{:04}", *counter);
+        return;
+    }
+
+    if s == "type" {
+        *s = "type_".to_string();
         return;
     }
 
@@ -711,7 +745,7 @@ impl<'a> Gen<'a> {
             if !*value {
                 let nested_scope = ifc.decl_scope().entry(i as u32)?;
                 let nested_scope_name = ifc.get_name_string(nested_scope.name)?;
-                info!(
+                debug!(
                     "scope #{} not found:  {}   forward decl? {}",
                     i,
                     nested_scope_name,

@@ -39,7 +39,7 @@ impl<'a> Gen<'a> {
             // This is a variable declaration, not a definition. We can emit an "extern static" item.
             let ty_tokens = self.get_type_tokens(var.ty)?;
 
-            let mut_kw = if self.ifc.is_const_qualified(var.ty)? {
+            let mut_kw = if !self.ifc.is_const_qualified(var.ty)? {
                 quote!(mut)
             } else {
                 quote!()

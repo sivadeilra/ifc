@@ -4,6 +4,7 @@ impl<'a> Gen<'a> {
     pub fn gen_function(
         &self,
         member_decl_index: DeclIndex,
+        names_map: &mut HashMap<Ident, u32>,
     ) -> Result<Option<(CallingConvention, TokenStream)>> {
         let func_decl = self.ifc.decl_function().entry(member_decl_index.index())?;
         Ok(match func_decl.name.tag() {
@@ -22,6 +23,33 @@ impl<'a> Gen<'a> {
                     if func_decl.type_.tag() != TypeSort::FUNCTION {
                         bail!("Function has wrong type: {:?}", func_decl.type_);
                     }
+
+                    let original_func_ident = syn::Ident::new(func_name, Span::call_site());
+                    let mut func_ident = original_func_ident.clone();
+
+                    if names_map.contains_key(&original_func_ident) {
+                        loop {
+                            let overload_counter = names_map.get_mut(&original_func_ident).unwrap();
+                            *overload_counter += 1;
+
+                            func_ident = Ident::new(
+                                &format!("{}_{}", func_name, *overload_counter),
+                                Span::call_site(),
+                            );
+
+                            if names_map.contains_key(&func_ident) {
+                                // loop again
+                            } else {
+                                // we found a somewhat-unique one
+                                break;
+                            }
+                        }
+                    } else {
+                        // This is the first time we've seen this symbol. Hopefully, it's the
+                        // last time.
+                        names_map.insert(func_ident.clone(), 0);
+                    }
+
                     let func_ty = self.ifc.type_function().entry(func_decl.type_.index())?;
 
                     let mut return_type_tokens = TokenStream::new();
@@ -53,7 +81,6 @@ impl<'a> Gen<'a> {
                         }
                     }
 
-                    let func_ident = syn::Ident::new(func_name, Span::call_site());
                     Some((
                         func_ty.convention,
                         quote! {
