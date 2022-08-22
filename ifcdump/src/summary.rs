@@ -4,7 +4,7 @@ pub fn dump_summary(ifc: &Ifc) -> Result<()> {
     let unit = ifc.file_header().unit;
     println!("Unit = {} 0x{:x}", unit, unit);
     let mut totals = Totals::default();
-    count_totals_in_scope(ifc, &mut totals, ifc.file_header().global_scope)?;
+    count_totals_in_scope(ifc, &mut totals, ifc.global_scope())?;
 
     totals.object_macros = ifc.macro_object_like().entries.len() as u64;
     totals.function_macros = ifc.macro_function_like().entries.len() as u64;
@@ -17,12 +17,8 @@ fn show_totals(totals: &Totals) {
     println!("{:#?}", totals);
 }
 
+// scope is zero-based
 fn count_totals_in_scope(ifc: &Ifc, totals: &mut Totals, scope: ScopeIndex) -> Result<()> {
-    if scope == 0 {
-        println!("Invalid scope (zero)");
-        return Ok(());
-    }
-
     let scope_descriptor = ifc.scope_desc().entry(scope - 1)?;
     let scope_members = ifc.scope_member();
 

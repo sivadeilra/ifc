@@ -13,10 +13,14 @@ struct Options {
     #[structopt(long = "reference")]
     reference: Vec<String>,
 
+    #[structopt(long = "pretty")]
+    pretty: bool,
+
     /// Rust source file to write.
     output: String,
 }
 
+#[allow(dead_code)]
 struct Reference {
     name: String,
     path: String,
@@ -24,6 +28,8 @@ struct Reference {
 }
 
 fn main() -> Result<()> {
+    env_logger::builder().format_timestamp(None).init();
+
     let cli_options = Options::from_args();
     let gen_options = gen_rust::Options::default();
     let ifc = Ifc::from_file(std::path::Path::new(&cli_options.ifc))?;
@@ -60,7 +66,7 @@ fn main() -> Result<()> {
     let tokens = gen_rust::gen_rust(&ifc, symbol_map, &gen_options)?;
 
     let output_as_string: String;
-    if false {
+    if !cli_options.pretty {
         output_as_string = tokens.to_string();
     } else {
         println!("Pretty-formatting output");

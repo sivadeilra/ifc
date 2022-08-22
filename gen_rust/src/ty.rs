@@ -12,6 +12,8 @@ impl<'a> Gen<'a> {
             type_index = qt.unqualified_type;
         }
 
+        let mut anon_name_counter: u32 = 0;
+
         Ok(match type_index.tag() {
             TypeSort::FUNDAMENTAL => {
                 let fun_ty = self.ifc.type_fundamental().entry(type_index.index())?;
@@ -68,6 +70,8 @@ impl<'a> Gen<'a> {
 
                     TypeBasis::WCHAR_T => quote!(u16),
 
+                    TypeBasis::VOID => quote!(core::ffi::c_void),
+
                     _ => todo!("TypeBasis: {:?}", fun_ty.basis),
                 }
             }
@@ -98,7 +102,13 @@ impl<'a> Gen<'a> {
             }
 
             TypeSort::DESIGNATED => {
-                let desig_decl = self.ifc.type_designated().entry(type_index.index())?;
+                let desig_decl = *self.ifc.type_designated().entry(type_index.index())?;
+
+                if let Some(id) = self.renamed_decls.get(&desig_decl) {
+                    debug!("found renamed decl: {:?} -> {}", desig_decl, id);
+                    return Ok(id.to_token_stream());
+                }
+
                 let desig_name: &str = match desig_decl.tag() {
                     DeclSort::SCOPE => {
                         let scope_decl = self.ifc.decl_scope().entry(desig_decl.index())?;
@@ -125,16 +135,42 @@ impl<'a> Gen<'a> {
                     _ => todo!("unrecognized designated type: {:?}", desig_decl),
                 };
 
-                if let Some(extern_crate) = self.symbol_map.resolve(desig_name) {
+
+                let mut desig_name = desig_name.to_string();
+                fixup_anon_names(&mut desig_name, &mut anon_name_counter);
+
+                if let Some(extern_crate) = self.symbol_map.resolve(&desig_name) {
                     // This designated type reference resolves to a name in a dependent crate.
                     trace!("resolved type to external crate: {}", extern_crate);
                     let extern_ident = syn::Ident::new(extern_crate, Span::call_site());
-                    let desig_ident = syn::Ident::new(desig_name, Span::call_site());
+                    let desig_ident = syn::Ident::new(&desig_name, Span::call_site());
                     quote! { #extern_ident :: #desig_ident}
                 } else {
                     // This designated type references something in this crate.
-                    Ident::new(desig_name, Span::call_site()).to_token_stream()
+                    Ident::new(&desig_name, Span::call_site()).to_token_stream()
                 }
+            }
+
+            TypeSort::UNALIGNED => {
+                // TODO: property handle unaligned
+                let unaligned = self.ifc.type_unaligned().entry(type_index.index())?;
+                self.get_type_tokens(*unaligned)?
+            }
+
+            TypeSort::LVALUE_REFERENCE => {
+                let lvalue_ref = *self.ifc.type_lvalue_reference().entry(type_index.index())?;
+                let tokens = self.get_type_tokens(lvalue_ref)?;
+                quote!(*mut #tokens)
+            }
+
+            TypeSort::RVALUE_REFERENCE => {
+                let rvalue_ref = *self.ifc.type_rvalue_reference().entry(type_index.index())?;
+                let tokens = self.get_type_tokens(rvalue_ref)?;
+                quote!(*mut #tokens)
+            }
+
+            TypeSort::FUNCTION => {
+                quote!(*const core::ffi::c_void)
             }
 
             _ => todo!("unrecognized type sort: {:?}", type_index),

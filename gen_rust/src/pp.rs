@@ -24,7 +24,7 @@ impl<'a> Gen<'a> {
     ) -> Result<()> {
         let name = self.ifc.get_string(object.name)?;
 
-        info!("processing: #define {} ...", name);
+        trace!("processing: #define {} ...", name);
 
         // It's not possible to convert all #define macros to Rust constants. We look for certain
         // patterns. The simplest macros to convert consist of a single literal constant, or a
@@ -41,15 +41,17 @@ impl<'a> Gen<'a> {
                     return Ok(());
                 }
                 FormSort::TUPLE => {
-                    let tuple = self.ifc.pp_tuple().entry(body.index())?;
-                    if tuple.cardinality != 1 {
-                        warn!("tuple cardinality is {}, but we need 1", tuple.cardinality);
-                        break;
-                    }
+                    if false {
+                        let tuple = self.ifc.pp_tuple().entry(body.index())?;
+                        if tuple.cardinality != 1 {
+                            warn!("tuple cardinality is {}, but we need 1", tuple.cardinality);
+                            break;
+                        }
 
-                    let element0 = *self.ifc.heap_form().entry(tuple.start)?;
-                    let t = self.convert_form_number_to_tokens(name, element0)?;
-                    output.extend(t);
+                        let element0 = *self.ifc.heap_form().entry(tuple.start)?;
+                        let t = self.convert_form_number_to_tokens(name, element0)?;
+                        output.extend(t);
+                    }
                     return Ok(());
                 }
                 _ => {}

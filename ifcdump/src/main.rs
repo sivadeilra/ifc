@@ -101,7 +101,9 @@ fn main() -> Result<()> {
 
     let needs_scope = options.functions || options.enums || options.structs || options.typedefs;
     if needs_scope {
-        dump_scope(&ifc, ifc.global_scope(), &options, 20)?;
+        dump_scope_table(&ifc)?;
+
+        dump_scope(&ifc, ifc.global_scope(), &options, 20, Indent(0))?;
     }
 
     // dump_attr_basic(&ifc)?;
@@ -122,11 +124,42 @@ fn dump_scopes(ifc: &Ifc) -> Result<()> {
     Ok(())
 }
 
+fn dump_scope_table(ifc: &Ifc) -> Result<()> {
+    println!("Scopes table (flat):");
+    println!("    Global scope index: {}", ifc.global_scope());
+    for (i, decl_scope) in ifc.decl_scope().entries.iter().enumerate() {
+        let scope_index = i + 1;
+        let scope_name = ifc.get_name_string(decl_scope.name)?;
+        println!("Scope #{:-5} : {}", scope_index, scope_name);
+    }
+    println!();
+    Ok(())
+}
+
+#[derive(Copy, Clone)]
+struct Indent(pub u32);
+
+impl core::fmt::Display for Indent {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
+        for i in 0..self.0 {
+            fmt.write_str("    ")?;
+        }
+        Ok(())
+    }
+}
+
+impl Indent {
+    fn nested(self) -> Self {
+        Self(self.0 + 1)
+    }
+}
+
 fn dump_scope(
     ifc: &Ifc,
     parent_scope: ScopeIndex,
     options: &Options,
     max_depth: u32,
+    indent: Indent,
 ) -> Result<()> {
     if parent_scope == 0 {
         println!("Invalid scope (zero)");
@@ -134,7 +167,8 @@ fn dump_scope(
     }
 
     println!(
-        "// Scope #{}{}",
+        "{}// Scope #{}{}",
+        indent,
         parent_scope,
         if parent_scope == ifc.file_header().global_scope {
             " - Global scope"
@@ -153,7 +187,7 @@ fn dump_scope(
     }
     let max_depth = max_depth - 1;
 
-    trace!("scope descriptor = {:?}", scope_descriptor);
+    trace!("{}scope descriptor = {:?}", indent, scope_descriptor);
 
     let scope_members = ifc.scope_member();
 
@@ -161,11 +195,9 @@ fn dump_scope(
         scope_descriptor.start..scope_descriptor.start + scope_descriptor.cardinality
     {
         let member_decl_index: DeclIndex = *scope_members.entry(member_index)?;
-
-        trace!(
-            "member {}: decl_index = {:?}",
-            member_index,
-            member_decl_index
+        println!(
+            "{}scope member: decl_index = {:?}",
+            indent, member_decl_index
         );
 
         match member_decl_index.tag() {
@@ -173,8 +205,8 @@ fn dump_scope(
                 if options.typedefs {
                     let decl_alias = ifc.decl_alias().entry(member_decl_index.index())?;
                     let alias_name = ifc.get_string(decl_alias.name)?;
-                    println!("    alias: {}", alias_name);
-                    println!("{:#?}", decl_alias);
+                    println!("{}alias: {}", indent, alias_name);
+                    println!("{}{:#?}", indent, decl_alias);
                 }
             }
 
@@ -187,24 +219,36 @@ fn dump_scope(
                     };
                     let func_name = ifc.get_name_string(func_decl.name)?;
                     let type_str = ifc.get_type_string(func_decl.type_)?;
-                    println!("function: {} : {}", func_name, type_str);
+                    println!("{}function: {} : {}", indent, func_name, type_str);
                 }
             }
 
             DeclSort::SCOPE => {
                 let nested_scope = ifc.decl_scope().entry(member_decl_index.index())?;
-                let nested_scope_name = ifc.get_string(nested_scope.name.index())?;
+                let nested_scope_name = ifc.get_name_string(nested_scope.name)?;
 
                 // What kind of scope is it?
                 if ifc.is_type_namespace(nested_scope.ty)? {
                     // It's a namespace. We always recurse into namespaces.
-                    dump_scope(ifc, nested_scope.initializer, options, max_depth - 1)?;
+                    dump_scope(
+                        ifc,
+                        nested_scope.initializer,
+                        options,
+                        max_depth - 1,
+                        indent.nested(),
+                    )?;
                 } else {
                     if options.structs {
                         // It's a nested struct/class.
-                        println!("struct {} {{", nested_scope_name);
-                        dump_scope(ifc, nested_scope.initializer, options, max_depth - 1)?;
-                        println!("}} // struct {}", nested_scope_name);
+                        println!("{}struct {} {{", indent, nested_scope_name);
+                        dump_scope(
+                            ifc,
+                            nested_scope.initializer,
+                            options,
+                            max_depth - 1,
+                            indent.nested(),
+                        )?;
+                        println!("{}}} // struct {}", indent, nested_scope_name);
                         println!();
                     }
                 }
@@ -216,7 +260,7 @@ fn dump_scope(
                 let field = ifc.decl_field().entry(member_decl_index.index())?;
                 let field_name = ifc.get_string(field.name)?;
                 let field_type_string = ifc.get_type_string(field.ty)?;
-                println!("    {:-20} {};", field_type_string, field_name);
+                println!("{}{:-20} {};", indent, field_type_string, field_name);
             }
 
             DeclSort::BITFIELD => {
@@ -225,8 +269,8 @@ fn dump_scope(
                 let bitfield_type_string = ifc.get_type_string(bitfield.ty)?;
                 let bitfield_width = ifc.get_literal_expr_u32(bitfield.width)?;
                 println!(
-                    "    {:-20} {} : {};",
-                    bitfield_type_string, bitfield_name, bitfield_width
+                    "{}{:-20} {} : {};",
+                    indent, bitfield_type_string, bitfield_name, bitfield_width
                 );
             }
 
@@ -234,12 +278,12 @@ fn dump_scope(
                 if options.enums {
                     let en = ifc.decl_enum().entry(member_decl_index.index())?;
                     let en_name = ifc.get_string(en.name)?;
-                    println!("    enum: {}", en_name);
+                    println!("{}enum: {}", indent, en_name);
 
                     for var_index in en.initializer.to_range() {
                         let var = ifc.decl_enumerator().entry(var_index)?;
                         let var_name = ifc.get_string(var.name)?;
-                        println!("      {}", var_name);
+                        println!("{}{}", indent, var_name);
                     }
                 }
             }
@@ -262,7 +306,7 @@ fn dump_scope(
 
             _ => {
                 nyi!();
-                println!("unknown decl: {:?}", member_decl_index);
+                println!("{}unknown decl: {:?}", indent, member_decl_index);
             }
         }
     }

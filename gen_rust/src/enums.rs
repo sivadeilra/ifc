@@ -3,7 +3,9 @@ use super::*;
 impl<'a> Gen<'a> {
     pub fn gen_enum(&self, enum_decl: &DeclEnum) -> Result<TokenStream> {
         // let en = ifc.decl_enum().entry(member_decl_index.index())?;
-        let en_name = self.ifc.get_string(enum_decl.name)?;
+        let mut en_name = self.ifc.get_string(enum_decl.name)?.to_string();
+        fixup_anon_names(&mut en_name, &mut 0); // TODO: fixup anon_name_counter
+
         let en_ident = Ident::new(&en_name, Span::call_site());
 
         // info!("enumeration decl:\n{:#?}", enum_decl);

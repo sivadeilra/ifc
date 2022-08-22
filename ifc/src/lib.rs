@@ -313,17 +313,11 @@ impl Ifc {
     }
 
     pub fn global_scope(&self) -> ScopeIndex {
+        assert!(self.file_header.global_scope > 0);
         self.file_header.global_scope
     }
 
     pub fn iter_scope(&self, scope: ScopeIndex) -> Result<IterScope<'_>> {
-        if scope == 0 {
-            return Ok(IterScope {
-                members: &[],
-                ifc: self,
-            });
-        }
-
         let scope_desc = self.scope_desc().entry(scope - 1)?;
 
         if let Some(slice) = self.scope_member().entries.get(
@@ -409,7 +403,7 @@ impl Ifc {
     */
 
     pub fn get_scope_descriptor(&self, scope_index: ScopeIndex) -> Result<&ScopeDescriptor> {
-        self.scope_desc().entry(scope_index)
+        self.scope_desc().entry(scope_index - 1)
     }
 
     pub fn type_heap_lookup(&self, index: Index) -> Result<TypeIndex> {
@@ -586,7 +580,8 @@ impl Ifc {
                     DeclSort::SCOPE => {
                         let scope = self.decl_scope().entry(designated_type.index())?;
                         let scope_name = self.get_name_string(scope.name)?;
-                        scope_name.to_string()
+                        format!("{} {:?} ({:?})", scope_name, designated_type, scope)
+                        // scope_name.to_string()
                     }
 
                     DeclSort::ENUMERATION => {

@@ -11,19 +11,40 @@ impl<'a> Gen<'a> {
         }
         // It's a nested struct/class.
 
-        let nested_scope_name = self.ifc.get_string(nested_scope.name.index())?;
+        let nested_scope_name: String;
+        let nested_scope_ident: Ident = if let Some(id) = self.renamed_decls.get(&member_decl_index)
+        {
+            nested_scope_name = id.to_string();
+            id.clone()
+        } else {
+            nested_scope_name = self.ifc.get_string(nested_scope.name.index())?.to_string();
+            Ident::new(&nested_scope_name, Span::call_site())
+        };
 
         // If the initializer is NULL (not empty, but NULL), then this is a forward declaration
-        // with no definition. We don't do anything for those, yet.
+        // with no definition.
         if nested_scope.initializer == 0 {
             // This struct has a forward declaration but no definition,
             // e.g. "struct FOO;".  Not sure what to do about that, yet.
-            debug!("struct {} - ignoring forward decl", nested_scope_name);
-            return Ok(quote!());
+            debug!("struct {} - forward decl", nested_scope_ident);
+
+            let use_extern_types = false;
+            if use_extern_types {
+                return Ok(quote! {
+                    extern "C" {
+                        pub type #nested_scope_ident;
+                    }
+                });
+            } else {
+                return Ok(quote! {
+                    #[repr(transparent)]
+                    pub struct #nested_scope_ident(pub u8);
+                });
+            }
         }
 
         // If the type is defined in a different crate, then do not emit a definition.
-        if self.symbol_map.is_symbol_in(nested_scope_name) {
+        if self.symbol_map.is_symbol_in(&nested_scope_name) {
             debug!("struct {} - defined in external crate", nested_scope_name);
             return Ok(quote!());
         }
@@ -55,26 +76,66 @@ impl<'a> Gen<'a> {
         // TODO: handle packing
         // TODO: handle alignment
 
+        let mut anon_name_counter: u32 = 0;
+
         for member_decl in self.ifc.iter_scope(nested_scope.initializer)? {
             match member_decl.tag() {
                 DeclSort::FIELD => {
                     let field_decl = self.ifc.decl_field().entry(member_decl.index())?;
-                    let field_name = self.ifc.get_string(field_decl.name)?;
-                    let field_ident = Ident::new(field_name, Span::call_site());
+                    let mut field_name = self.ifc.get_string(field_decl.name)?.to_string();
+
+                    if field_name == "EntryPointActivationContext" {
+                        debug!(
+                            "found EntryPointActivationContext:\nField: {:#?}\nTy: {:#?}",
+                            field_decl, field_decl.ty
+                        );
+                        if field_decl.ty.tag() == TypeSort::POINTER {
+                            let ptr = self.ifc.type_pointer().entry(field_decl.ty.index())?;
+                            debug!("ptr: {:#?}", ptr);
+                            if ptr.tag() == TypeSort::DESIGNATED {
+                                let desig_decl: DeclIndex =
+                                    *self.ifc.type_designated().entry(ptr.index())?;
+                                debug!("desig_decl = {:?}", desig_decl);
+
+                                match desig_decl.tag() {
+                                    DeclSort::SCOPE => {
+                                        let scope =
+                                            self.ifc.decl_scope().entry(desig_decl.index())?;
+                                        let scope_name = self.ifc.get_name_string(scope.name)?;
+                                        debug!(
+                                            "... {} {:?} ({:?})",
+                                            scope_name, desig_decl, scope
+                                        )
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+
+                    fixup_anon_names(&mut field_name, &mut anon_name_counter);
+                    let field_ident = Ident::new(&field_name, Span::call_site());
                     let field_type_tokens = self.get_type_tokens(field_decl.ty)?;
                     struct_contents.extend(quote! { pub #field_ident: #field_type_tokens, });
                 }
 
                 DeclSort::BITFIELD => {
                     // TODO: implement bitfields
-                    let bitfield = self.ifc.decl_bitfield().entry(member_decl_index.index())?;
-                    let bitfield_name = self.ifc.get_string(bitfield.name)?;
-                    let bitfield_ident = Ident::new(bitfield_name, Span::call_site());
-                    let _bitfield_type_string = self.ifc.get_type_string(bitfield.ty)?;
-                    let _bitfield_width = self.ifc.get_literal_expr_u32(bitfield.width)?;
-                    struct_contents.extend(quote! {
-                        pub #bitfield_ident: (),
-                    });
+                    if true {
+                        let bitfield = self.ifc.decl_bitfield().entry(member_decl.index())?;
+                        let bitfield_name = self.ifc.get_string(bitfield.name)?;
+                        if bitfield_name.starts_with('<') {
+                            // e.g. "<alignment member>"
+                        } else {
+                            let bitfield_ident = Ident::new(bitfield_name, Span::call_site());
+                            let bitfield_type_tokens = self.get_type_tokens(bitfield.ty)?;
+                            let bitfield_width =
+                                self.ifc.get_literal_expr_u32(bitfield.width)? as usize;
+                            struct_contents.extend(quote! {
+                                pub #bitfield_ident: __Bitfield<#bitfield_width, #bitfield_type_tokens>,
+                            });
+                        }
+                    }
                 }
 
                 _ => {
@@ -83,14 +144,16 @@ impl<'a> Gen<'a> {
             }
         }
 
-        let struct_ident = syn::Ident::new(nested_scope_name, Span::call_site());
+        // This is useful, but very verbose.
+        // let doc = format!("{:#?}", nested_scope);
 
-        let doc = format!("{:#?}", nested_scope);
+        let doc = format!("Scope: {:?}", member_decl_index);
 
+        debug!("emitting struct {}", nested_scope_ident);
         Ok(quote! {
             #[doc = #doc]
             #[repr(C)]
-            pub struct #struct_ident {
+            pub struct #nested_scope_ident {
                 #struct_contents
             }
         })

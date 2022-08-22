@@ -137,6 +137,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "experiments"
+version = "0.1.0"
+dependencies = [
+ "foo_dep",
+]
+
+[[package]]
+name = "foo_dep"
+version = "0.1.0"
+
+[[package]]
 name = "gen_rust"
 version = "0.1.0"
 dependencies = [
@@ -147,9 +158,12 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
+ "serde",
+ "serde_derive",
  "static_init",
  "structopt",
  "syn",
+ "toml",
 ]
 
 [[package]]
@@ -355,6 +369,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
+name = "serde"
+version = "1.0.144"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f747710de3dcd43b88c9168773254e809d8ddbdf9653b84e2554ab219f17860"
+
+[[package]]
+name = "serde_derive"
+version = "1.0.144"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94ed3a816fb1d101812f83e789f888322c34e291f894f19590dc310963e87a00"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -457,6 +488,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d326610f408c7a4eb6f51c37c330e496b08506c9457c9d34287ecc38809fb060"
 dependencies = [
  "unicode-width",
+]
+
+[[package]]
+name = "toml"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d82e1a7758622a465f8cee077614c73484dac5b836c02ff6a40d5d1010324d7"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

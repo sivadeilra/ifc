@@ -4,4 +4,9 @@ members = [
     "ifc",
     "ifcdump",
     "gen_rust",
+    "temp/foo_dep",
+    "temp/experiments",
 ]
+
+[profile.release]
+debug = 2

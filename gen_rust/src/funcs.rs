@@ -10,6 +10,11 @@ impl<'a> Gen<'a> {
             NameSort::IDENTIFIER => {
                 let func_name = self.ifc.get_string(func_decl.name.index())?;
 
+                // TODO: hack, deal with overloaded function names in nt.h
+                if func_name == "_RTL_CONSTANT_STRING_type_check" {
+                    return Ok(None);
+                }
+
                 if self.symbol_map.is_symbol_in(func_name) {
                     debug!("function {} - defined in external crate", func_name);
                     None
