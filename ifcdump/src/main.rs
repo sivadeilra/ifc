@@ -241,6 +241,7 @@ fn dump_scope(
                     if options.structs {
                         // It's a nested struct/class.
                         println!("{}struct {} {{", indent, nested_scope_name);
+                        println!("{}// source location: {:?}", indent.nested(), nested_scope.locus);
                         dump_scope(
                             ifc,
                             nested_scope.initializer,
@@ -345,10 +346,10 @@ fn dump_name_source_file(ifc: &Ifc) -> Result<()> {
         }
 
         let path = ifc.get_string(entry.path)?;
-        println!("    {}", path);
+        println!("    [{:4}] {}", i, path);
         if entry.guard != 0 {
             let guard = ifc.get_string(entry.guard)?;
-            println!("    guard {}", guard);
+            println!("            guard {}", guard);
         }
     }
 
