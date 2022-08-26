@@ -137,17 +137,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "experiments"
-version = "0.1.0"
-dependencies = [
- "foo_dep",
-]
-
-[[package]]
-name = "foo_dep"
-version = "0.1.0"
-
-[[package]]
 name = "gen_rust"
 version = "0.1.0"
 dependencies = [
