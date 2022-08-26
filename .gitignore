@@ -3,3 +3,9 @@
 *.obj
 *.ifc
 /.vscode
+
+*.lib
+*.rlib
+*.out
+*.log
+*.ifc

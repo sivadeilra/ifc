@@ -4,6 +4,7 @@ members = [
     "ifc",
     "ifcdump",
     "gen_rust",
+    "rmeta_reader",
 ]
 
 [profile.release]
