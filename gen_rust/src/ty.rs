@@ -54,7 +54,7 @@ impl<'a> Gen<'a> {
 
                     TypeBasis::FLOAT | TypeBasis::DOUBLE => {
                         if fun_ty.precision != TypePrecision::DEFAULT {
-                            bail!("Floating-point types must have default precision");
+                            warn!("Floating-point types must have default precision");
                         }
                         if fun_ty.sign != TypeSign::PLAIN {
                             bail!("Floating-point types must have default sign");

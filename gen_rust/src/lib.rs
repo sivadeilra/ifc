@@ -289,6 +289,9 @@ impl<'a> Gen<'a> {
             #![allow(non_camel_case_types)]
             #![allow(non_snake_case)]
             #![allow(non_upper_case_globals)]
+            #![allow(dead_code)]
+            #![allow(unused_imports)]
+            #![allow(improper_ctypes)]
             #![no_std]
 
             #extern_crates
@@ -535,6 +538,8 @@ impl<'a> Gen<'a> {
                 | DeclSort::EXPLICIT_INSTANTIATION
                 | DeclSort::FIELD
                 | DeclSort::BITFIELD
+                | DeclSort::USING_DECLARATION
+                | DeclSort::PARTIAL_SPECIALIZATION
                 | DeclSort::EXPLICIT_SPECIALIZATION => {}
 
                 _ => {
@@ -711,6 +716,8 @@ impl<'a> Gen<'a> {
                     | DeclSort::TEMPLATE
                     | DeclSort::EXPLICIT_INSTANTIATION
                     | DeclSort::EXPLICIT_SPECIALIZATION
+                    | DeclSort::PARTIAL_SPECIALIZATION
+                    | DeclSort::USING_DECLARATION
                     | DeclSort::ENUMERATOR
                     | DeclSort::ENUMERATION
                     | DeclSort::VARIABLE
