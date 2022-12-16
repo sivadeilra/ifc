@@ -219,7 +219,7 @@ fn dump_scope(
                     };
                     let func_name = ifc.get_name_string(func_decl.name)?;
                     let type_str = ifc.get_type_string(func_decl.type_)?;
-                    println!("{}function: {} : {}", indent, func_name, type_str);
+                    println!("{}function: {} : {:?} {:?} : {}", indent, func_name, func_decl.specifiers, func_decl.traits, type_str);
                 }
             }
 
