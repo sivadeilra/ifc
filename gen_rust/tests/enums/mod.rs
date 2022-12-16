@@ -11,7 +11,7 @@ fn enums_test() {
 
     let mut rustc = c.cmd_rustc();
     rustc.arg("--crate-type=bin");
-    rustc.arg("main.rs");
+    rustc.arg("checker.rs");
     c.spawn_and_wait(rustc);
 
     let checker_path = c.case_tmp_dir.join("checker");
