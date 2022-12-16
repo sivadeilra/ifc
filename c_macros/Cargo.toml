@@ -12,6 +12,7 @@ proc-macro = true
 syn = { version = "1.0.73", features = ["full", "extra-traits"] }
 quote = "1.0.9"
 proc-macro2 = "1.0.27"
+zerocopy = "0.6.1"
 
 [dev-dependencies]
 com = "0.4"
