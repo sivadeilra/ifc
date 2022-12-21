@@ -84,8 +84,7 @@ impl Case {
         let ifc_file_path = self.case_tmp_dir.join(ifc_filename);
         println!("ifc_file_path: {}", ifc_file_path.display());
         let ifc_data = std::fs::read(&ifc_file_path).expect("failed to read IFC file");
-        let ifc = Ifc::load(ifc_data).expect("failed to parse IFC file data");
-        ifc
+        Ifc::load(ifc_data).expect("failed to parse IFC file data")
     }
 
     fn write_file(&self, filename: &str, contents: &str) {

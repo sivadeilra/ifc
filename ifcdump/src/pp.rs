@@ -26,25 +26,24 @@ pub fn dump_pp(ifc: &Ifc, matcher: &mut dyn FnMut(&str) -> bool) -> Result<()> {
             s.clear();
         }
 
-        if arity != 0 {
-            if func_like.parameters.tag() == FormSort::TUPLE {
-                let params_tuple = ifc.pp_tuple().entry(func_like.parameters.index())?;
-                if params_tuple.cardinality == func_like.arity() {
-                    for i in 0..param_arity {
-                        let param_str = &mut param_names[i];
-                        let param_form = *ifc.heap_form().entry(params_tuple.start + i as u32)?;
-                        if param_form.tag() == FormSort::PARAMETER {
-                            let p = ifc.pp_param().entry(param_form.index())?;
-                            let s = ifc.get_string(p.spelling)?;
-                            param_str.push_str(s);
-                        } else {
-                            println!("parameter had wrong sort: {:?}", param_form);
-                            param_str.push_str("__bad__");
-                        }
+        if arity != 0 && func_like.parameters.tag() == FormSort::TUPLE {
+            let params_tuple = ifc.pp_tuple().entry(func_like.parameters.index())?;
+            if params_tuple.cardinality == func_like.arity() {
+                #[allow(clippy::needless_range_loop)]   // Clippy recommends the "for_each" function, which causes the `?` operator to not work.
+                for i in 0..param_arity {
+                    let param_str = &mut param_names[i];
+                    let param_form = *ifc.heap_form().entry(params_tuple.start + i as u32)?;
+                    if param_form.tag() == FormSort::PARAMETER {
+                        let p = ifc.pp_param().entry(param_form.index())?;
+                        let s = ifc.get_string(p.spelling)?;
+                        param_str.push_str(s);
+                    } else {
+                        println!("parameter had wrong sort: {:?}", param_form);
+                        param_str.push_str("__bad__");
                     }
-                } else {
-                    println!("warning: tuple arity does not match parameters arity");
                 }
+            } else {
+                println!("warning: tuple arity does not match parameters arity");
             }
         }
 
@@ -53,7 +52,7 @@ pub fn dump_pp(ifc: &Ifc, matcher: &mut dyn FnMut(&str) -> bool) -> Result<()> {
         println!(
             "#define {}({}) {}",
             name,
-            param_names[..param_arity].join(", ").to_string(),
+            param_names[..param_arity].join(", "),
             s
         );
         println!("\t{}", raw);
@@ -92,13 +91,13 @@ fn form_to_string_rec(ifc: &Ifc, form: FormIndex, output: &mut String, raw_outpu
             let id = ifc.pp_ident().entry(form.index())?;
             let id_string = ifc.get_string(id.spelling)?;
             output.push(' ');
-            output.push_str(&id_string);
+            output.push_str(id_string);
             write!(raw_output, "IDENTIFIER{{ {} }}, ", id_string)?;
         }
 
         FormSort::PARENTHESIZED => {
             let paren = ifc.pp_paren().entry(form.index())?;
-            output.push_str("(");
+            output.push('(');
             raw_output.push_str("PARENTHESIZED{ ");
             form_to_string_rec(ifc, paren.operand, output, raw_output)?;
             output.push(')');

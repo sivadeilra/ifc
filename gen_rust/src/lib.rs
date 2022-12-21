@@ -1,6 +1,7 @@
 //! Generates Rust code from IFC modules
 
 #![forbid(unused_must_use)]
+#![allow(clippy::too_many_arguments)]
 
 use anyhow::{bail, Result};
 use ifc::*;
@@ -248,7 +249,7 @@ impl<'a> Gen<'a> {
     fn new(ifc: &'a Ifc, symbol_map: SymbolMap, options: &'a Options) -> Self {
         Self {
             ifc,
-            symbol_map: symbol_map,
+            symbol_map,
             options,
             wk: WellKnown {
                 tokens_empty: quote!(),
@@ -559,9 +560,9 @@ impl<'a> Gen<'a> {
                     let en_name = self.ifc.get_string(en.name)?;
                     if self.symbol_map.is_symbol_in(en_name) {
                         debug!("enum {} - defined in external crate", en_name);
-                    } else if type_filter.is_allowed_qualified_name(parent_scope_name, &en_name) {
+                    } else if type_filter.is_allowed_qualified_name(parent_scope_name, en_name) {
                         debug!("enum {} - emitting", en_name);
-                        let t = self.gen_enum(&en)?;
+                        let t = self.gen_enum(en)?;
                         outputs.types.extend(t);
                     }
                 }
@@ -606,34 +607,28 @@ impl<'a> Gen<'a> {
     ) -> Result<()> {
         let mut names_map: HashMap<Ident, u32> = HashMap::new();
 
-        let mut num_errors: u32 = 0;
+        let mut _num_errors: u32 = 0;
 
         for member in self.ifc.iter_scope(parent_scope)? {
-            match member.tag() {
-                DeclSort::FUNCTION => {
-                    match self.gen_function(member, filter, &mut names_map, parent_scope_name) {
-                        Ok(Some((convention, func_tokens))) => {
-                            // Write the extern function declaration to the right extern "X" { ... } block.
-                            let extern_block = match convention {
-                                CallingConvention::Std => &mut outputs.extern_stdcall,
-                                CallingConvention::Cdecl => &mut outputs.extern_cdecl,
-                                CallingConvention::Fast => &mut outputs.extern_fastcall,
-                                _ => bail!(
-                                    "Function calling convention {:?} is not supported",
-                                    convention
-                                ),
-                            };
-                            extern_block.extend(func_tokens);
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                            num_errors += 1;
-                        }
+            if let DeclSort::FUNCTION = member.tag() {
+                match self.gen_function(member, filter, &mut names_map, parent_scope_name) {
+                    Ok(Some((convention, func_tokens))) => {
+                        // Write the extern function declaration to the right extern "X" { ... } block.
+                        let extern_block = match convention {
+                            CallingConvention::Std => &mut outputs.extern_stdcall,
+                            CallingConvention::Cdecl => &mut outputs.extern_cdecl,
+                            CallingConvention::Fast => &mut outputs.extern_fastcall,
+                            _ => bail!(
+                                "Function calling convention {:?} is not supported",
+                                convention
+                            ),
+                        };
+                        extern_block.extend(func_tokens);
                     }
-                }
-
-                _ => {
-                    // Ignore all other decls.
+                    Ok(None) => {}
+                    Err(_) => {
+                        _num_errors += 1;
+                    }
                 }
             }
         }
@@ -731,7 +726,7 @@ pub fn fixup_anon_names(s: &mut String, counter: &mut u32) {
         match c {
             '<' => out.push_str("__lt"),
             '>' => out.push_str("__gt"),
-            '-' => out.push_str("_"),
+            '-' => out.push('_'),
             c => out.push(c),
         }
     }

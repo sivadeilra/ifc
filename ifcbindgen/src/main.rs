@@ -9,8 +9,7 @@ mod options;
 
 fn read_ifc(ifc_file_path: &std::path::PathBuf) -> Ifc {
     let ifc_data = std::fs::read(ifc_file_path).expect("failed to read IFC file");
-    let ifc = Ifc::load(ifc_data).expect("failed to parse IFC file data");
-    ifc
+    Ifc::load(ifc_data).expect("failed to parse IFC file data")
 }
 
 fn main() -> Result<()> {

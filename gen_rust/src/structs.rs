@@ -113,14 +113,11 @@ impl<'a> Gen<'a> {
                                     *self.ifc.type_designated().entry(ptr.index())?;
                                 debug!("desig_decl = {:?}", desig_decl);
 
-                                match desig_decl.tag() {
-                                    DeclSort::SCOPE => {
-                                        let scope =
-                                            self.ifc.decl_scope().entry(desig_decl.index())?;
-                                        let scope_name = self.ifc.get_name_string(scope.name)?;
-                                        debug!("... {} {:?} ({:?})", scope_name, desig_decl, scope)
-                                    }
-                                    _ => {}
+                                if let DeclSort::SCOPE = desig_decl.tag() {
+                                    let scope =
+                                        self.ifc.decl_scope().entry(desig_decl.index())?;
+                                    let scope_name = self.ifc.get_name_string(scope.name)?;
+                                    debug!("... {} {:?} ({:?})", scope_name, desig_decl, scope)
                                 }
                             }
                         }

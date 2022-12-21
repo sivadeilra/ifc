@@ -21,23 +21,9 @@ impl<'a> Gen<'a> {
                 return Ok(())
         }
 
-        let var_ident = Ident::new(&var_name, Span::call_site());
+        let var_ident = Ident::new(var_name, Span::call_site());
 
-        let is_const;
-        if var.traits.contains(ObjectTraits::CONSTEXPR) {
-            is_const = true;
-        } else {
-            if self.ifc.is_const_qualified(var.ty)? {
-                // If it has a literal initializer, it's a constant.
-                if self.ifc.is_literal_expr(var.initializer) {
-                    is_const = true;
-                } else {
-                    is_const = false;
-                }
-            } else {
-                is_const = false;
-            }
-        }
+        let is_const = var.traits.contains(ObjectTraits::CONSTEXPR) || (self.ifc.is_const_qualified(var.ty)? && self.ifc.is_literal_expr(var.initializer));
 
         if is_const {
             let ty_tokens = self.get_type_tokens(var.ty)?;

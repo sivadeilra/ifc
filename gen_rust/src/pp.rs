@@ -2,7 +2,6 @@ use super::*;
 use anyhow::Context;
 use log::warn;
 use proc_macro2::Punct;
-use regex::Regex;
 
 mod eval;
 
@@ -268,8 +267,7 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
                 .map_or(false, |obj_name| obj_name == name)
         }) {
             Some(MacroObjectOrFunction::Object(object))
-        } else if let Some(func_like) =
-            self.ifc
+        } else { self.ifc
                 .macro_function_like()
                 .entries
                 .iter()
@@ -277,12 +275,7 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
                     self.ifc
                         .get_string(object.name)
                         .map_or(false, |obj_name| obj_name == name)
-                })
-        {
-            Some(MacroObjectOrFunction::Function(func_like))
-        } else {
-            None
-        }
+                }).map(MacroObjectOrFunction::Function) }
     }
 
     /// Converts a C++ macro number into a Rust number.
@@ -368,12 +361,12 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
                 }
 
                 if value_u64 == u64::MAX {
-                    return Ok(quote_spanned!(Span::mixed_site()=>u64::MAX));
+                    Ok(quote_spanned!(Span::mixed_site()=>u64::MAX))
+                } else {
+                    write!(chars, "{}", value_u64).unwrap();
+                    let lit = syn::LitInt::new(&chars, Span::call_site()).to_token_stream();
+                    Ok(quote_spanned!(Span::mixed_site()=>#lit as u64))
                 }
-
-                write!(chars, "{}", value_u64).unwrap();
-                let lit = syn::LitInt::new(&chars, Span::call_site()).to_token_stream();
-                return Ok(quote_spanned!(Span::mixed_site()=>#lit as u64));
             } else {
                 // signed
                 let mut value_i64 = value_u128 as i64;
@@ -384,18 +377,14 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
                 // Special case for "most negative" value. This value will not change its sign
                 // if we negate it, because it oveflows. Such is the price of 2's complement.
                 if value_i64 == i64::MIN {
-                    return Ok(quote_spanned!(Span::mixed_site()=>i64::MIN));
-                }
-
-                if value_i64 == i64::MAX {
-                    return Ok(quote_spanned!(Span::mixed_site()=>i64::MAX));
-                }
-
-                if is_negative {
+                    Ok(quote_spanned!(Span::mixed_site()=>i64::MIN))
+                } else if value_i64 == i64::MAX {
+                    Ok(quote_spanned!(Span::mixed_site()=>i64::MAX))
+                } else if is_negative {
                     value_i64 = -value_i64;
-                    return Ok(quote_spanned!(Span::mixed_site()=> - #value_i64));
+                    Ok(quote_spanned!(Span::mixed_site()=> - #value_i64))
                 } else {
-                    return Ok(quote_spanned!(Span::mixed_site()=>#value_i64));
+                    Ok(quote_spanned!(Span::mixed_site()=>#value_i64))
                 }
             }
         } else {
@@ -407,9 +396,10 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
                     value_u32 = (value_u32 as i32).wrapping_neg() as u32;
                 }
                 if value_u32 == u32::MAX {
-                    return Ok(quote_spanned!(Span::mixed_site()=>u32::MAX));
+                    Ok(quote_spanned!(Span::mixed_site()=>u32::MAX))
+                } else {
+                    Ok(quote_spanned!(Span::mixed_site()=>#value_u32))
                 }
-                return Ok(quote_spanned!(Span::mixed_site()=>#value_u32));
             } else {
                 // signed
                 let mut value_i32 = value_u128 as i32;
@@ -420,18 +410,14 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
                 // Special case for "most negative" value. This value will not change its sign
                 // if we negate it, because it oveflows. Such is the price of 2's complement.
                 if value_i32 == i32::MIN {
-                    return Ok(quote_spanned!(Span::mixed_site()=>i32::MIN));
-                }
-
-                if value_i32 == i32::MAX {
-                    return Ok(quote_spanned!(Span::mixed_site()=>i32::MAX));
-                }
-
-                if is_negative {
+                    Ok(quote_spanned!(Span::mixed_site()=>i32::MIN))
+                } else if value_i32 == i32::MAX {
+                    Ok(quote_spanned!(Span::mixed_site()=>i32::MAX))
+                } else if is_negative {
                     value_i32 = -value_i32;
-                    return Ok(quote_spanned!(Span::mixed_site()=> - #value_i32));
+                    Ok(quote_spanned!(Span::mixed_site()=> - #value_i32))
                 } else {
-                    return Ok(quote_spanned!(Span::mixed_site()=> #value_i32));
+                    Ok(quote_spanned!(Span::mixed_site()=> #value_i32))
                 }
             }
         }
@@ -479,22 +465,18 @@ impl<'a> Gen<'a> {
             }
         }
 
-        loop {
-            // Process the work queue.
-            if let Some((name, macro_obj_or_func)) = macro_gen.work_queue.pop() {
-                // Check if already added.
-                if !macro_gen.output_macros.contains_key(name) {
-                    match macro_obj_or_func {
-                        MacroObjectOrFunction::Object(object) => {
-                            macro_gen.add_object_like_macro(object, name)
-                        }
-                        MacroObjectOrFunction::Function(func_like) => {
-                            macro_gen.add_function_like_macro(func_like, name)
-                        }
+        // Process the work queue.
+        while let Some((name, macro_obj_or_func)) = macro_gen.work_queue.pop() {
+            // Check if already added.
+            if !macro_gen.output_macros.contains_key(name) {
+                match macro_obj_or_func {
+                    MacroObjectOrFunction::Object(object) => {
+                        macro_gen.add_object_like_macro(object, name)
+                    }
+                    MacroObjectOrFunction::Function(func_like) => {
+                        macro_gen.add_function_like_macro(func_like, name)
                     }
                 }
-            } else {
-                break;
             }
         }
 

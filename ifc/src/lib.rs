@@ -448,7 +448,7 @@ impl Ifc {
                     _ => "??",
                 };
                 if !noexcept_str.is_empty() {
-                    s.push_str(" ");
+                    s.push(' ');
                     s.push_str(noexcept_str);
                 }
                 s
@@ -553,7 +553,7 @@ impl Ifc {
             TypeSort::POINTER => {
                 let pointee_type: TypeIndex = *self.type_pointer().entry(type_index.index())?;
                 let mut pointee_type_str = self.get_type_string(pointee_type)?;
-                pointee_type_str.push_str("*");
+                pointee_type_str.push('*');
                 pointee_type_str
             }
 
@@ -561,7 +561,7 @@ impl Ifc {
                 let pointee_type: TypeIndex =
                     *self.type_lvalue_reference().entry(type_index.index())?;
                 let mut pointee_type_str = self.get_type_string(pointee_type)?;
-                pointee_type_str.push_str("&");
+                pointee_type_str.push('&');
                 pointee_type_str
             }
 

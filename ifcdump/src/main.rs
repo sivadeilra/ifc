@@ -237,21 +237,19 @@ fn dump_scope(
                         max_depth - 1,
                         indent.nested(),
                     )?;
-                } else {
-                    if options.structs {
-                        // It's a nested struct/class.
-                        println!("{}struct {} {{", indent, nested_scope_name);
-                        println!("{}// source location: {:?}", indent.nested(), nested_scope.locus);
-                        dump_scope(
-                            ifc,
-                            nested_scope.initializer,
-                            options,
-                            max_depth - 1,
-                            indent.nested(),
-                        )?;
-                        println!("{}}} // struct {}", indent, nested_scope_name);
-                        println!();
-                    }
+                } else if options.structs {
+                    // It's a nested struct/class.
+                    println!("{}struct {} {{", indent, nested_scope_name);
+                    println!("{}// source location: {:?}", indent.nested(), nested_scope.locus);
+                    dump_scope(
+                        ifc,
+                        nested_scope.initializer,
+                        options,
+                        max_depth - 1,
+                        indent.nested(),
+                    )?;
+                    println!("{}}} // struct {}", indent, nested_scope_name);
+                    println!();
                 }
             }
 

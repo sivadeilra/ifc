@@ -1,6 +1,7 @@
 use super::*;
 use anyhow::Result;
 use core::mem::size_of;
+use std::cmp::Ordering;
 use log::{debug, trace};
 
 // Partition
@@ -87,40 +88,44 @@ where
     // TODO: Use zerocopy support to efficiently zero-extend this.
     vec.resize_with(num_records, T::new_zeroed);
 
-    if expected_record_size == record_size {
-        trace!(
-            "loading partition {}, {} records, exact size",
-            part_name,
-            num_records
-        );
-
-        vec.as_bytes_mut()
-            .copy_from_slice(&part_data[..num_records * record_size]);
-    } else if expected_record_size < record_size {
-        // Truncate each record.
-        println!(
-            "loading partition {}, {} records, truncating records from {} bytes to {}",
-            part_name, num_records, record_size, expected_record_size
-        );
-        for (dst, src) in vec
-            .as_bytes_mut()
-            .chunks_exact_mut(expected_record_size)
-            .zip(part_data.chunks_exact(record_size))
-        {
-            dst.copy_from_slice(&src[..expected_record_size]);
+    match expected_record_size.cmp(&record_size) {
+        Ordering::Equal => {
+            trace!(
+                "loading partition {}, {} records, exact size",
+                part_name,
+                num_records
+            );
+    
+            vec.as_bytes_mut()
+                .copy_from_slice(&part_data[..num_records * record_size]);
         }
-    } else {
-        // Zero-fill (implicitly) each record. Copy only what is valid.
-        println!(
-            "loading partition {}, {} records, expanding records from {} bytes to {}",
-            part_name, num_records, record_size, expected_record_size
-        );
-        for (dst, src) in vec
-            .as_bytes_mut()
-            .chunks_exact_mut(expected_record_size)
-            .zip(part_data.chunks_exact(record_size))
-        {
-            dst[..record_size].copy_from_slice(src);
+        Ordering::Less => {
+            // Truncate each record.
+            println!(
+                "loading partition {}, {} records, truncating records from {} bytes to {}",
+                part_name, num_records, record_size, expected_record_size
+            );
+            for (dst, src) in vec
+                .as_bytes_mut()
+                .chunks_exact_mut(expected_record_size)
+                .zip(part_data.chunks_exact(record_size))
+            {
+                dst.copy_from_slice(&src[..expected_record_size]);
+            }
+        }
+        Ordering::Greater => {
+            // Zero-fill (implicitly) each record. Copy only what is valid.
+            println!(
+                "loading partition {}, {} records, expanding records from {} bytes to {}",
+                part_name, num_records, record_size, expected_record_size
+            );
+            for (dst, src) in vec
+                .as_bytes_mut()
+                .chunks_exact_mut(expected_record_size)
+                .zip(part_data.chunks_exact(record_size))
+            {
+                dst[..record_size].copy_from_slice(src);
+            }
         }
     }
 

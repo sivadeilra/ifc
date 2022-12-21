@@ -74,7 +74,7 @@ impl ArityAndVariadic {
     }
 
     pub fn is_variadic(&self) -> bool {
-        (self.0 & 0x8000_000) != 0
+        (self.0 & 0x8000_0000) != 0
     }
 }
 

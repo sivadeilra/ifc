@@ -65,15 +65,14 @@ fn main() -> Result<()> {
 
     let tokens = gen_rust::gen_rust(&ifc, symbol_map, &gen_options)?;
 
-    let output_as_string: String;
-    if !cli_options.pretty {
-        output_as_string = tokens.to_string();
+    let output_as_string = if !cli_options.pretty {
+        tokens.to_string()
     } else {
         println!("Pretty-formatting output");
         let tokens_as_file: syn::File = syn::parse2(tokens)?;
 
-        output_as_string = prettyplease::unparse(&tokens_as_file);
-    }
+        prettyplease::unparse(&tokens_as_file)
+    };
 
     std::fs::write(&cli_options.output, &output_as_string)?;
 

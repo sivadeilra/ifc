@@ -81,30 +81,28 @@ impl<'a> Gen<'a> {
                             } else {
                                 quote!(false)
                             }
-                        } else {
-                            if let Some(fun_ty) = fun_ty && matches!(fun_ty.sign, TypeSign::SIGNED | TypeSign::PLAIN) {
-                                let value_i64: i64 = value as i64;
-                                if value_i64 < 0 {
-                                    if let Some(value_pos) = value_i64.checked_abs() {
-                                        let lit = syn::LitInt::new(
-                                            &value_pos.to_string(),
-                                            Span::call_site(),
-                                        );
-                                        quote!(-#lit)
-                                    } else {
-                                        bail!(
-                                        "Negative value is -MAX_INT, not sure how to handle that."
+                        } else if let Some(fun_ty) = fun_ty && matches!(fun_ty.sign, TypeSign::SIGNED | TypeSign::PLAIN) {
+                            let value_i64: i64 = value as i64;
+                            if value_i64 < 0 {
+                                if let Some(value_pos) = value_i64.checked_abs() {
+                                    let lit = syn::LitInt::new(
+                                        &value_pos.to_string(),
+                                        Span::call_site(),
                                     );
-                                    }
+                                    quote!(-#lit)
                                 } else {
-                                    let lit =
-                                        syn::LitInt::new(&value.to_string(), Span::call_site());
-                                    quote!(#lit)
+                                    bail!(
+                                    "Negative value is -MAX_INT, not sure how to handle that."
+                                );
                                 }
                             } else {
-                                let lit = syn::LitInt::new(&value.to_string(), Span::call_site());
+                                let lit =
+                                    syn::LitInt::new(&value.to_string(), Span::call_site());
                                 quote!(#lit)
                             }
+                        } else {
+                            let lit = syn::LitInt::new(&value.to_string(), Span::call_site());
+                            quote!(#lit)
                         }
                     }
                     LiteralSort::FLOATING_POINT => {
