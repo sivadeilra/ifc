@@ -1,13 +1,18 @@
 use super::*;
 
 impl<'a> Gen<'a> {
-    pub fn gen_struct(&self, member_decl_index: DeclIndex) -> Result<TokenStream> {
+    pub fn gen_struct(
+        &self,
+        member_decl_index: DeclIndex,
+        parent_scope_name: &str,
+        filter: options::Filter,
+    ) -> Result<Option<(TokenStream, String)>> {
         let nested_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
 
         // What kind of scope is it?
         if self.ifc.is_type_namespace(nested_scope.ty)? {
             // We do not yet process namespaces.
-            return Ok(quote!());
+            return Ok(None);
         }
         // It's a nested struct/class.
 
@@ -21,6 +26,11 @@ impl<'a> Gen<'a> {
             Ident::new(&nested_scope_name, Span::call_site())
         };
 
+        // Check to see if its filtered.
+        if !filter.is_allowed_qualified_name(&nested_scope_name, parent_scope_name) {
+            return Ok(None);
+        }
+
         // If the initializer is NULL (not empty, but NULL), then this is a forward declaration
         // with no definition.
         if nested_scope.initializer == 0 {
@@ -30,23 +40,29 @@ impl<'a> Gen<'a> {
 
             let use_extern_types = false;
             if use_extern_types {
-                return Ok(quote! {
-                    extern "C" {
-                        pub type #nested_scope_ident;
-                    }
-                });
+                return Ok(Some((
+                    quote! {
+                        extern "C" {
+                            pub type #nested_scope_ident;
+                        }
+                    },
+                    nested_scope_name,
+                )));
             } else {
-                return Ok(quote! {
-                    #[repr(transparent)]
-                    pub struct #nested_scope_ident(pub u8);
-                });
+                return Ok(Some((
+                    quote! {
+                        #[repr(transparent)]
+                        pub struct #nested_scope_ident(pub u8);
+                    },
+                    nested_scope_name,
+                )));
             }
         }
 
         // If the type is defined in a different crate, then do not emit a definition.
         if self.symbol_map.is_symbol_in(&nested_scope_name) {
             debug!("struct {} - defined in external crate", nested_scope_name);
-            return Ok(quote!());
+            return Ok(None);
         }
 
         // Emit the definition for this struct.
@@ -102,10 +118,7 @@ impl<'a> Gen<'a> {
                                         let scope =
                                             self.ifc.decl_scope().entry(desig_decl.index())?;
                                         let scope_name = self.ifc.get_name_string(scope.name)?;
-                                        debug!(
-                                            "... {} {:?} ({:?})",
-                                            scope_name, desig_decl, scope
-                                        )
+                                        debug!("... {} {:?} ({:?})", scope_name, desig_decl, scope)
                                     }
                                     _ => {}
                                 }
@@ -150,12 +163,15 @@ impl<'a> Gen<'a> {
         let doc = format!("Scope: {:?}", member_decl_index);
 
         debug!("emitting struct {}", nested_scope_ident);
-        Ok(quote! {
-            #[doc = #doc]
-            #[repr(C)]
-            pub struct #nested_scope_ident {
-                #struct_contents
-            }
-        })
+        Ok(Some((
+            quote! {
+                #[doc = #doc]
+                #[repr(C)]
+                pub struct #nested_scope_ident {
+                    #struct_contents
+                }
+            },
+            nested_scope_name,
+        )))
     }
 }

@@ -63,6 +63,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+ "zerocopy",
 ]
 
 [[package]]
@@ -147,6 +148,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
+ "regex",
  "serde",
  "serde_derive",
  "static_init",
@@ -188,6 +190,20 @@ dependencies = [
  "c_macros",
  "log",
  "zerocopy",
+]
+
+[[package]]
+name = "ifcbindgen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "gen_rust",
+ "ifc",
+ "log",
+ "prettyplease",
+ "structopt",
+ "syn",
 ]
 
 [[package]]

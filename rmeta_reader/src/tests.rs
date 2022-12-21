@@ -6,6 +6,7 @@ static INIT_LOGGER: () = env_logger::builder().format_timestamp(None).init();
 // this sorta works
 // #[cfg(nope)]
 #[test]
+#[ignore]
 fn more_stuff() {
     let mut gen = Gen::default();
 

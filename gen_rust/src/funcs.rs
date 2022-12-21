@@ -4,12 +4,18 @@ impl<'a> Gen<'a> {
     pub fn gen_function(
         &self,
         member_decl_index: DeclIndex,
+        filter: options::Filter,
         names_map: &mut HashMap<Ident, u32>,
+        parent_scope_name: &str,
     ) -> Result<Option<(CallingConvention, TokenStream)>> {
         let func_decl = self.ifc.decl_function().entry(member_decl_index.index())?;
         Ok(match func_decl.name.tag() {
             NameSort::IDENTIFIER => {
                 let func_name = self.ifc.get_string(func_decl.name.index())?;
+
+                if !filter.is_allowed_qualified_name(func_name, parent_scope_name) {
+                    return Ok(None);
+                }
 
                 // TODO: hack, deal with overloaded function names in nt.h
                 if func_name == "_RTL_CONSTANT_STRING_type_check" {

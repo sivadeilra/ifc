@@ -14,7 +14,8 @@ fn load_config(s: &str) -> ModulesConfig {
 
 #[test]
 fn basic() {
-    load_config(r#"
+    load_config(
+        r#"
 
 global_stuff = "blah blah"
 
@@ -42,5 +43,6 @@ gen-cxx-header-unit = true
 gen-cxx-module = true
 
 
-    "#);
+    "#,
+    );
 }

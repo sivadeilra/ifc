@@ -1,13 +1,11 @@
 //! Generates Rust code from IFC modules
 
-#![allow(unused_imports)]
 #![forbid(unused_must_use)]
 
 use anyhow::{bail, Result};
-use expr::*;
 use ifc::*;
-use log::warn;
-use log::{debug, info, trace};
+use log::{debug, error, info, trace, warn};
+pub use options::{ Options, TestOptions};
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::*;
@@ -15,28 +13,16 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use syn::Ident;
-use syn::*;
 
 mod config;
 mod enums;
 mod expr;
 mod funcs;
+mod options;
 mod pp;
 mod structs;
 mod ty;
 mod vars;
-
-#[derive(Clone, Debug)]
-pub struct Options {
-    /// Derive Debug impls for types, by default
-    pub derive_debug: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self { derive_debug: true }
-    }
-}
 
 // This is an alias into the `refs` table.
 type RefIndex = usize;
@@ -52,25 +38,40 @@ struct Gen<'a> {
 }
 
 #[derive(Default)]
-struct GenOutputs {
+struct GenOutputs<'a> {
     // module-wide attribute
     top: TokenStream,
 
+    // NOTE: We use HashMap instead of BTreeMap since it is faster in general
+    // and we only care about sorting by key when we generate the final stream.
     types: TokenStream,
     consts: TokenStream,
     statics: TokenStream,
-    macros: TokenStream,
+    macros: HashMap<&'a str, Result<TokenStream>>,
     aliases: TokenStream,
     extern_cdecl: TokenStream,
     extern_stdcall: TokenStream,
     extern_fastcall: TokenStream,
 }
 
-impl GenOutputs {
-    fn finish(self) -> TokenStream {
+impl<'a> GenOutputs<'a> {
+    fn finish(self) -> Result<TokenStream> {
+        let mut had_errors = false;
+
         let mut output = self.top;
         output.extend(self.types);
-        output.extend(self.macros);
+        let mut macros = self.macros.iter().collect::<Vec<_>>();
+        macros.sort_by_key(|(&k, _)| k);
+        output.append_all(macros.iter().filter_map(|(_, v)| {
+            match v {
+                Ok(tokens) => Some(tokens),
+                Err(err) => {
+                    error!("{:#}", err);
+                    had_errors = true;
+                    None
+                }
+            }
+        }));
         output.extend(self.consts);
         output.extend(self.statics);
 
@@ -103,7 +104,7 @@ impl GenOutputs {
         }
 
         let aliases = self.aliases;
-        output.extend(quote!{
+        output.extend(quote! {
             pub mod __typedefs {
                 use super::*;
                 #aliases
@@ -111,7 +112,10 @@ impl GenOutputs {
             pub use __typedefs::*;
         });
 
-        output
+        if had_errors {
+            bail!("Encountered errors during code generation");
+        }
+        Ok(output)
     }
 }
 
@@ -267,11 +271,20 @@ pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<T
     gen.renamed_decls = renamed_decls;
 
     outputs.top.extend(gen.gen_crate_start()?);
-    outputs.macros.extend(gen.gen_macros()?);
-    gen.gen_types(&mut outputs)?;
-    gen.find_orphans(&mut outputs)?;
-    gen.gen_functions(&mut outputs, ifc.global_scope())?;
-    Ok(outputs.finish())
+    gen.gen_macros(options.macro_filter(), &mut outputs.macros)?;
+    gen.gen_types(
+        options.type_filter(),
+        options.variable_filter(),
+        &mut outputs,
+    )?;
+    gen.find_orphans(options.type_filter(), &mut outputs)?;
+    gen.gen_functions(
+        options.function_filter(),
+        &mut outputs,
+        ifc.global_scope(),
+        "",
+    )?;
+    outputs.finish()
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -305,8 +318,21 @@ impl<'a> Gen<'a> {
     }
 
     #[inline(never)]
-    fn gen_types(&self, outputs: &mut GenOutputs) -> Result<()> {
-        self.gen_types_for_scope(outputs, self.ifc.global_scope(), 50, ScopeKind::Namespace)
+    fn gen_types(
+        &self,
+        type_filter: options::Filter,
+        variable_filter: options::Filter,
+        outputs: &mut GenOutputs,
+    ) -> Result<()> {
+        self.gen_types_for_scope(
+            type_filter,
+            Some(variable_filter),
+            outputs,
+            self.ifc.global_scope(),
+            "",
+            50,
+            ScopeKind::Namespace,
+        )
     }
 
     /// Walk all scopes and find types that appear to be compiler-generated.
@@ -438,8 +464,11 @@ impl<'a> Gen<'a> {
     #[inline(never)]
     fn gen_types_for_scope(
         &self,
+        type_filter: options::Filter,
+        variable_filter: Option<options::Filter>,
         outputs: &mut GenOutputs,
         parent_scope: ScopeIndex,
+        parent_scope_name: &str,
         max_depth: u32,
         _scope_kind: ScopeKind,
     ) -> Result<()> {
@@ -471,7 +500,9 @@ impl<'a> Gen<'a> {
 
                         if self.symbol_map.is_symbol_in(&alias_name) {
                             debug!("alias {} is defined in external crate", alias_name);
-                        } else {
+                        } else if type_filter
+                            .is_allowed_qualified_name(parent_scope_name, &alias_name)
+                        {
                             debug!("alias {} - adding", alias_name);
                             let alias_ident = syn::Ident::new(&alias_name, Span::call_site());
                             let aliasee_tokens = self.get_type_tokens(decl_alias.aliasee)?;
@@ -497,21 +528,28 @@ impl<'a> Gen<'a> {
                         // We do not yet process nested namespaces.
                     } else {
                         // It's a nested struct/class.
-                        outputs.types.extend(self.gen_struct(member_decl_index)?);
+                        if let Some((struct_tokens, struct_name)) =
+                            self.gen_struct(member_decl_index, parent_scope_name, type_filter)?
+                        {
+                            outputs.types.extend(struct_tokens);
 
-                        if nested_scope.initializer != 0 {
-                            debug!(
-                                "gen_types_for_scope: recursing, to scope #{} (zero-based)",
-                                nested_scope.initializer
-                            );
-                            self.gen_types_for_scope(
-                                outputs,
-                                nested_scope.initializer,
-                                max_depth - 1,
-                                ScopeKind::Type,
-                            )?;
-                        } else {
-                            debug!("gen_types_for_scope: not recursing, because this is a forward decl only");
+                            if nested_scope.initializer != 0 {
+                                debug!(
+                                    "gen_types_for_scope: recursing, to scope #{} (zero-based)",
+                                    nested_scope.initializer
+                                );
+                                self.gen_types_for_scope(
+                                    type_filter,
+                                    None,
+                                    outputs,
+                                    nested_scope.initializer,
+                                    &format!("{}::{}", parent_scope_name, struct_name),
+                                    max_depth - 1,
+                                    ScopeKind::Type,
+                                )?;
+                            } else {
+                                debug!("gen_types_for_scope: not recursing, because this is a forward decl only");
+                            }
                         }
                     }
                 }
@@ -521,7 +559,7 @@ impl<'a> Gen<'a> {
                     let en_name = self.ifc.get_string(en.name)?;
                     if self.symbol_map.is_symbol_in(en_name) {
                         debug!("enum {} - defined in external crate", en_name);
-                    } else {
+                    } else if type_filter.is_allowed_qualified_name(parent_scope_name, &en_name) {
                         debug!("enum {} - emitting", en_name);
                         let t = self.gen_enum(&en)?;
                         outputs.types.extend(t);
@@ -529,7 +567,12 @@ impl<'a> Gen<'a> {
                 }
 
                 DeclSort::VARIABLE => {
-                    self.gen_variable(member_decl_index.index(), outputs)?;
+                    self.gen_variable(
+                        member_decl_index.index(),
+                        &variable_filter,
+                        parent_scope_name,
+                        outputs,
+                    )?;
                 }
 
                 DeclSort::INTRINSIC
@@ -554,7 +597,13 @@ impl<'a> Gen<'a> {
 
     /// Recursively walks a scope and generates type definitions for it.
     #[inline(never)]
-    fn gen_functions(&self, outputs: &mut GenOutputs, parent_scope: ScopeIndex) -> Result<()> {
+    fn gen_functions(
+        &self,
+        filter: options::Filter,
+        outputs: &mut GenOutputs,
+        parent_scope: ScopeIndex,
+        parent_scope_name: &str,
+    ) -> Result<()> {
         let mut names_map: HashMap<Ident, u32> = HashMap::new();
 
         let mut num_errors: u32 = 0;
@@ -562,7 +611,7 @@ impl<'a> Gen<'a> {
         for member in self.ifc.iter_scope(parent_scope)? {
             match member.tag() {
                 DeclSort::FUNCTION => {
-                    match self.gen_function(member, &mut names_map) {
+                    match self.gen_function(member, filter, &mut names_map, parent_scope_name) {
                         Ok(Some((convention, func_tokens))) => {
                             // Write the extern function declaration to the right extern "X" { ... } block.
                             let extern_block = match convention {
@@ -596,6 +645,7 @@ impl<'a> Gen<'a> {
     fn emit_forward_decl_scope(
         &self,
         member_decl_index: DeclIndex,
+        filter: options::Filter,
         outputs: &mut GenOutputs,
     ) -> Result<()> {
         let decl_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
@@ -604,8 +654,9 @@ impl<'a> Gen<'a> {
             return Ok(());
         }
 
-        let t = self.gen_struct(member_decl_index)?;
-        outputs.types.extend(t);
+        if let Some((t, _)) = self.gen_struct(member_decl_index, "", filter)? {
+            outputs.types.extend(t);
+        }
         Ok(())
     }
 }
@@ -696,7 +747,7 @@ pub struct SymbolRemaps {
 
 impl<'a> Gen<'a> {
     /// Walk all the scopes, see if there are declarations that are not part of any scope.
-    fn find_orphans(&self, outputs: &mut GenOutputs) -> Result<()> {
+    fn find_orphans(&self, type_filter: options::Filter, outputs: &mut GenOutputs) -> Result<()> {
         let ifc = self.ifc;
 
         struct State {
@@ -763,6 +814,7 @@ impl<'a> Gen<'a> {
                 if nested_scope.initializer == 0 {
                     self.emit_forward_decl_scope(
                         DeclIndex::new(DeclSort::SCOPE, i as u32),
+                        type_filter,
                         outputs,
                     )?;
                 }

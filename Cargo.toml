@@ -2,6 +2,7 @@
 members = [
     "c_macros",
     "ifc",
+    "ifcbindgen",
     "ifcdump",
     "gen_rust",
     "rmeta_reader",

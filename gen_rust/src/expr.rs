@@ -13,20 +13,49 @@ impl<'a> Gen<'a> {
                 // It appears the "type" field in ExprLiteral is always set to 0, which is
                 // VENDOR_EXTENSION.  So we don't actually know the type of the literal.
 
-                if ty.tag() != TypeSort::FUNDAMENTAL {
-                    bail!(
-                        "gen_expr_tokens: This only works with TypeSort::FUNDAMENTAL, not {:?}",
-                        ty
-                    );
+                fn get_fundamental_type(
+                    ifc: &Ifc,
+                    ty: TypeIndex,
+                ) -> Result<Option<&FundamentalType>> {
+                    match ty.tag() {
+                        TypeSort::DESIGNATED => {
+                            let designated_ty = ifc.type_designated().entry(ty.index())?;
+                            match designated_ty.tag() {
+                                DeclSort::ALIAS =>
+                                    get_fundamental_type(ifc, ifc.decl_alias().entry(designated_ty.index())?.aliasee),
+                                _ => bail!(
+                                    "gen_expr_tokens: This only works with DeclSort::ALIAS, not {:?}",
+                                    ty
+                                ),
+                            }
+                        },
+                        TypeSort::FUNDAMENTAL => {
+                            let fun_ty = ifc.type_fundamental().entry(ty.index())?;
+                            debug!("gen_expr_tokens: fun_ty {:?}", fun_ty);
+                            Ok(Some(fun_ty))
+                        },
+                        TypeSort::POINTER => {
+                            Ok(None)
+                        },
+                        _ => bail!(
+                            "gen_expr_tokens: This only works with TypeSort::DESIGNATED, FUNDAMENTAL or POINTER, not {:?}",
+                            ty
+                        ),
+                    }
                 }
-                let fun_ty = self.ifc.type_fundamental().entry(ty.index())?;
-                debug!("gen_expr_tokens: fun_ty {:?}", fun_ty);
+                let fun_ty = get_fundamental_type(self.ifc, ty)?;
 
                 match literal.value.tag() {
                     LiteralSort::IMMEDIATE => {
                         let value: u32 = literal.value.index();
                         trace!("LiteralSort::IMMEDIATE: value = 0x{:x} {}", value, value);
-                        if fun_ty.basis == TypeBasis::BOOL {
+                        if matches!(
+                            fun_ty,
+                            Some(FundamentalType {
+                                basis: TypeBasis::BOOL,
+                                ..
+                            })
+                        ) {
                             if value != 0 {
                                 quote!(true)
                             } else {
@@ -40,14 +69,20 @@ impl<'a> Gen<'a> {
                     LiteralSort::INTEGER => {
                         let value: u64 = *self.ifc.const_i64().entry(literal.value.index())?;
                         trace!("LiteralSort::INTEGER: value = 0x{:x} {}", value, value);
-                        if fun_ty.basis == TypeBasis::BOOL {
+                        if matches!(
+                            fun_ty,
+                            Some(FundamentalType {
+                                basis: TypeBasis::BOOL,
+                                ..
+                            })
+                        ) {
                             if value != 0 {
                                 quote!(true)
                             } else {
                                 quote!(false)
                             }
                         } else {
-                            if matches!(fun_ty.sign, TypeSign::SIGNED | TypeSign::PLAIN) {
+                            if let Some(fun_ty) = fun_ty && matches!(fun_ty.sign, TypeSign::SIGNED | TypeSign::PLAIN) {
                                 let value_i64: i64 = value as i64;
                                 if value_i64 < 0 {
                                     if let Some(value_pos) = value_i64.checked_abs() {

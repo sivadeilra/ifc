@@ -127,6 +127,22 @@ tagged_index! {
     }
 }
 
+impl FormOp {
+    pub fn value(self) -> PreProcessingOpOrPunc {
+        match self.tag() {
+            WordSort::PUNCTUATOR => PreProcessingOpOrPunc::Punctuator(WordSortPunctuator::from_u32(self.index())),
+            WordSort::OPERATOR => PreProcessingOpOrPunc::Operator(WordSortOperator::from_u32(self.index())),
+            _ => panic!("Not an operator or punctuator"),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum PreProcessingOpOrPunc {
+    Punctuator(WordSortPunctuator),
+    Operator(WordSortOperator),
+}
+
 
 /// `pp.key`
 #[repr(C)]

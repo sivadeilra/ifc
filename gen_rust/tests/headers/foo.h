@@ -22,6 +22,16 @@
 
 #define FOO_DECREMENT(f) ((f)->a--)
 
+#define SEVERITY_SUCCESS    0
+#define SEVERITY_ERROR      1
+
+#define FACILITY_WIN32K_NTGDI 0x3F
+
+#define MAKE_HRESULT(sev,fac,code) \
+    ((HRESULT) (((unsigned long)(sev)<<31) | ((unsigned long)(fac)<<16) | ((unsigned long)(code))) )
+
+#define STATUS_CREATE_COMPAT_BMP_ERROR     MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32K_NTGDI, 0x8)
+
 typedef unsigned int FooId_t;
 
 __interface IWhatever {

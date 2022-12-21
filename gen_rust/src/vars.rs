@@ -1,7 +1,13 @@
 use super::*;
 
 impl<'a> Gen<'a> {
-    pub fn gen_variable(&self, var_index: u32, outputs: &mut GenOutputs) -> Result<()> {
+    pub fn gen_variable(
+        &self,
+        var_index: u32,
+        filter: &Option<options::Filter>,
+        parent_scope_name: &str,
+        outputs: &mut GenOutputs,
+    ) -> Result<()> {
         let var = self.ifc.decl_var().entry(var_index)?;
 
         if var.name.tag() != NameSort::IDENTIFIER {
@@ -9,6 +15,11 @@ impl<'a> Gen<'a> {
             return Ok(());
         }
         let var_name = self.ifc.get_string(var.name.index())?;
+
+        if let Some(filter) = filter &&
+            !filter.is_allowed_qualified_name(var_name, parent_scope_name) {
+                return Ok(())
+        }
 
         let var_ident = Ident::new(&var_name, Span::call_site());
 

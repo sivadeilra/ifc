@@ -1,5 +1,6 @@
 #![forbid(unused_must_use)]
 
+use gen_rust::{ Options, TestOptions };
 use ifc::Ifc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -49,7 +50,9 @@ impl Case {
 
     fn cmd_rustc(&self) -> Command {
         let mut c = self.cmd("rustc");
+        c.env("RUSTC_BOOTSTRAP", "1");
         c.arg("--edition=2018");
+        c.arg("-Zmacro-backtrace");
         c.arg("-L");
         c.arg(".");
         c
@@ -97,6 +100,7 @@ impl Case {
         ifc_references: &[(&str, &str)],
         ifc_filename: &str,
         rust_crate_name: &str,
+        ifc_options: Options,
     ) {
         let ifc = self.read_ifc(ifc_filename);
 
@@ -110,7 +114,6 @@ impl Case {
             symbol_map.add_ref_ifc(ref_name, &ref_ifc).unwrap();
         }
 
-        let ifc_options = Default::default();
         let rust_generated_code = gen_rust::gen_rust(&ifc, symbol_map, &ifc_options)
             .expect("Expected gen_rust to succeed");
         let rust_tokens_as_file: syn::File = syn::parse2(rust_generated_code)
