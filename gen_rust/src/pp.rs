@@ -14,6 +14,7 @@ enum MacroObjectOrFunction<'a> {
 struct MacroGen<'ifc, 'gen> {
     ifc: &'ifc Ifc,
     output_macros: &'gen mut HashMap<&'ifc str, Result<TokenStream>>,
+    gen: &'gen Gen<'ifc>,
     is_object_like: HashMap<&'ifc str, bool>,
     work_queue: Vec<(&'ifc str, MacroObjectOrFunction<'ifc>)>,
 }
@@ -238,12 +239,16 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
 
         let identifier = self.ifc.pp_ident().entry(form.index())?;
         let name = self.ifc.get_string(identifier.spelling)?;
-        let is_object_like = self.is_object_like.get(name).copied().or_else(|| {
-            if let Some(macro_obj_or_func) = self.try_find_macro(name) {
+        let is_object_like = self.is_object_like.get(name).map(|&b| (None, b)).or_else(|| {
+            if let Some(ifc_name) = self.gen.symbol_map.resolve_object_like_macro(name) {
+                Some((Some(ifc_name), true))
+            } else if let Some(ifc_name) = self.gen.symbol_map.resolve_function_like_macro(name) {
+                Some((Some(ifc_name), false))
+            } else if let Some(macro_obj_or_func) = self.try_find_macro_in_current_ifc(name) {
                 self.work_queue.push((name, macro_obj_or_func));
                 match macro_obj_or_func {
-                    MacroObjectOrFunction::Object(_) => Some(true),
-                    MacroObjectOrFunction::Function(_) => Some(false),
+                    MacroObjectOrFunction::Object(_) => Some((None, true)),
+                    MacroObjectOrFunction::Function(_) => Some((None, false)),
                 }
             } else {
                 None
@@ -251,31 +256,36 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
         });
         let ident = Ident::new(name, Span::mixed_site());
         match is_object_like {
-            Some(true) => output.extend(quote_spanned!(Span::mixed_site()=>$crate::#ident!())),
-            Some(false) => output.extend(quote_spanned!(Span::mixed_site()=>$crate::#ident!)),
+            Some((Some(ifc_name), true)) => {
+                let ifc_ident = Ident::new(ifc_name, Span::mixed_site());
+                output.extend(quote_spanned!(Span::mixed_site()=>#ifc_ident::#ident!()))
+            },
+            Some((Some(ifc_name), false)) => {
+                let ifc_ident = Ident::new(ifc_name, Span::mixed_site());
+                output.extend(quote_spanned!(Span::mixed_site()=>#ifc_ident::#ident!))
+            },
+            Some((None, true)) => output.extend(quote_spanned!(Span::mixed_site()=>$crate::#ident!())),
+            Some((None, false)) => output.extend(quote_spanned!(Span::mixed_site()=>$crate::#ident!)),
             None => output.append(ident),
         }
         Ok(())
     }
 
     /// Attempts to find a macro with the given name.
-    fn try_find_macro(&self, name: &'ifc str) -> Option<MacroObjectOrFunction<'ifc>> {
-        // TODO: Prefer other IFCs
-        if let Some(object) = self.ifc.macro_object_like().entries.iter().find(|object| {
+    fn try_find_macro_in_current_ifc(&self, name: &'ifc str) -> Option<MacroObjectOrFunction<'ifc>> {
+        self.ifc.macro_object_like().entries.iter().find(|object| {
             self.ifc
                 .get_string(object.name)
                 .map_or(false, |obj_name| obj_name == name)
-        }) {
-            Some(MacroObjectOrFunction::Object(object))
-        } else { self.ifc
-                .macro_function_like()
-                .entries
-                .iter()
-                .find(|object| {
-                    self.ifc
-                        .get_string(object.name)
-                        .map_or(false, |obj_name| obj_name == name)
-                }).map(MacroObjectOrFunction::Function) }
+        }).map(MacroObjectOrFunction::Object).or_else(|| { self.ifc
+            .macro_function_like()
+            .entries
+            .iter()
+            .find(|object| {
+                self.ifc
+                    .get_string(object.name)
+                    .map_or(false, |obj_name| obj_name == name)
+            }).map(MacroObjectOrFunction::Function) })
     }
 
     /// Converts a C++ macro number into a Rust number.
@@ -443,16 +453,15 @@ impl<'a> Gen<'a> {
         let mut macro_gen = MacroGen {
             ifc: self.ifc,
             output_macros,
+            gen: self,
             is_object_like: HashMap::new(),
             work_queue: Vec::new(),
         };
 
-        // TODO Don't duplicate items from other IFCs.
-
         // Add object-like macros that pass the filter.
         for object in self.ifc.macro_object_like().entries.iter() {
             let name = self.ifc.get_string(object.name)?;
-            if filter.is_allowed(name) {
+            if filter.is_allowed(name) && !self.symbol_map.is_object_like_macro_in(name) {
                 macro_gen.add_object_like_macro(object, name);
             }
         }
@@ -460,7 +469,7 @@ impl<'a> Gen<'a> {
         // Add function-like macros that pass the filter.
         for func_like in self.ifc.macro_function_like().entries.iter() {
             let name = self.ifc.get_string(func_like.name)?;
-            if filter.is_allowed(name) {
+            if filter.is_allowed(name) && !self.symbol_map.is_function_like_macro_in(name) {
                 macro_gen.add_function_like_macro(func_like, name);
             }
         }

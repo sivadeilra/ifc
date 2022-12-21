@@ -5,6 +5,8 @@
 
 #define BAR_INCREMENT(x) (x + 1)
 
+#define STATUS_SOME_OTHER_ERROR     MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32K_NTGDI, 0x9)
+
 int bar(FooStuff* foo, FooId_t id, FooFlavor flavor);
 
 struct BarState {

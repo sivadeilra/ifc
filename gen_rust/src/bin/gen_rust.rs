@@ -60,7 +60,7 @@ fn main() -> Result<()> {
     println!("Finished reading referenced IFC files.");
     println!(
         "Total number of symbols found in referenced IFCs: {}",
-        symbol_map.map.len()
+        symbol_map.global_symbols.len()
     );
 
     let tokens = gen_rust::gen_rust(&ifc, symbol_map, &gen_options)?;

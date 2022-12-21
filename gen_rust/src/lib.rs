@@ -135,9 +135,13 @@ pub struct ReferencedIfc {
 #[derive(Default, Clone)]
 pub struct SymbolMap {
     pub crates: Vec<String>,
-    /// Maps symbol names that are in the global namespace scope to the IFC which define them.
+    /// Maps symbol names that are in the global namespace scope to the IFC which defines them.
     /// For example, `"_GUID"` to some index.
-    pub map: HashMap<String, RefIndex>,
+    pub global_symbols: HashMap<String, RefIndex>,
+    /// Maps object-like macro names to the IFC which defines them.
+    pub object_like_macros: HashMap<String, RefIndex>,
+    /// Maps function-like macro names to the IFC which defines them.
+    pub function_like_macros: HashMap<String, RefIndex>,
 }
 
 #[derive(Default, Clone)]
@@ -153,8 +157,7 @@ impl SymbolMap {
     /// If a symbol is exported by more than one Ifc, then just pick the one with the lowest index.
     /// This is a terrible idea, but it's good enough to start with.
     ///
-    /// For now, we only process the root scope.  So no nested namespaces.  And we ignore preprocessor
-    /// definitions.
+    /// For now, we only process the root scope.  So no nested namespaces.
     pub fn add_ref_ifc(&mut self, ifc_name: &str, ifc: &Ifc) -> Result<RefIndex> {
         let ifc_index = self.crates.len();
 
@@ -162,14 +165,14 @@ impl SymbolMap {
 
         let mut num_added: u64 = 0;
 
-        let mut add_symbol = |name: &str| {
-            if let Some(existing_index) = self.map.get_mut(name) {
+        let mut add_symbol = |name: &str, map: &mut HashMap<String, RefIndex>| {
+            if let Some(existing_index) = map.get_mut(name) {
                 if ifc_index < *existing_index {
                     *existing_index = ifc_index;
                 }
             } else {
                 // This is the first time we've seen this symbol. Insert using the current IFC index.
-                self.map.insert(name.to_string(), ifc_index);
+                map.insert(name.to_string(), ifc_index);
             }
             num_added += 1;
         };
@@ -185,7 +188,7 @@ impl SymbolMap {
                         // It's a nested struct/class.
                         if nested_scope.name.tag() == NameSort::IDENTIFIER {
                             let nested_name = ifc.get_string(nested_scope.name.index())?;
-                            add_symbol(nested_name);
+                            add_symbol(nested_name, &mut self.global_symbols);
                         } else {
                             warn!("ignoring scope member named: {:?}", nested_scope.name);
                         }
@@ -195,13 +198,13 @@ impl SymbolMap {
                 DeclSort::ALIAS => {
                     let alias = ifc.decl_alias().entry(member_decl.index())?;
                     let alias_name = ifc.get_string(alias.name)?;
-                    add_symbol(alias_name);
+                    add_symbol(alias_name, &mut self.global_symbols);
                 }
 
                 DeclSort::ENUMERATION => {
                     let en = ifc.decl_enum().entry(member_decl.index())?;
                     let en_name = ifc.get_string(en.name)?;
-                    add_symbol(en_name);
+                    add_symbol(en_name, &mut self.global_symbols);
                 }
 
                 DeclSort::INTRINSIC => {}
@@ -214,7 +217,7 @@ impl SymbolMap {
                     match func_decl.name.tag() {
                         NameSort::IDENTIFIER => {
                             let func_name = ifc.get_string(func_decl.name.index())?;
-                            add_symbol(func_name);
+                            add_symbol(func_name, &mut self.global_symbols);
                         }
                         _ => {
                             warn!("ignoring function named: {:?}", func_decl.name);
@@ -228,6 +231,16 @@ impl SymbolMap {
             }
         }
 
+        // Add object-like macros that pass the filter.
+        for object in ifc.macro_object_like().entries.iter() {
+            add_symbol(ifc.get_string(object.name)?, &mut self.object_like_macros);
+        }
+
+        // Add function-like macros that pass the filter.
+        for func_like in ifc.macro_function_like().entries.iter() {
+            add_symbol(ifc.get_string(func_like.name)?, &mut self.function_like_macros);
+        }
+
         info!(
             "Number of symbols added for this IFC '{}' (crate #{}): {}",
             ifc_name, ifc_index, num_added
@@ -236,11 +249,29 @@ impl SymbolMap {
     }
 
     pub fn is_symbol_in(&self, name: &str) -> bool {
-        self.map.contains_key(name)
+        self.global_symbols.contains_key(name)
+    }
+
+    pub fn is_object_like_macro_in(&self, name: &str) -> bool {
+        self.object_like_macros.contains_key(name)
+    }
+
+    pub fn is_function_like_macro_in(&self, name: &str) -> bool {
+        self.function_like_macros.contains_key(name)
     }
 
     pub fn resolve(&self, name: &str) -> Option<&str> {
-        let crate_index = *self.map.get(name)?;
+        let crate_index = *self.global_symbols.get(name)?;
+        Some(self.crates[crate_index].as_str())
+    }
+
+    pub fn resolve_object_like_macro(&self, name: &str) -> Option<&str> {
+        let crate_index = *self.object_like_macros.get(name)?;
+        Some(self.crates[crate_index].as_str())
+    }
+
+    pub fn resolve_function_like_macro(&self, name: &str) -> Option<&str> {
+        let crate_index = *self.function_like_macros.get(name)?;
         Some(self.crates[crate_index].as_str())
     }
 }
