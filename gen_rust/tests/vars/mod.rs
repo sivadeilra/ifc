@@ -5,7 +5,7 @@ fn vars_test() {
     let c = case("vars_test");
     c.compile_cpp("vars_mod.ixx", include_str!("vars_mod.ixx"));
 
-    c.read_ifc_compile_to_rust(&[], "vars_mod.ifc", "vars_mod", Default::default());
+    c.read_ifc_compile_to_rust(&[], "vars_mod.ifc", "vars_mod", Options::default_for_testing());
 
     c.write_file("checker.rs", include_str!("checker.rs"));
 

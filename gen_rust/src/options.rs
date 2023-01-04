@@ -8,11 +8,16 @@ fn parse_regex(value: &str) -> anyhow::Result<Regex> {
         .context("Invalid regex")
 }
 
-#[derive(Clone, Debug, StructOpt)]
+#[derive(Clone, Debug, StructOpt, Default)]
 pub struct Options {
     /// Derive Debug impls for types, by default
     #[structopt(long)]
     pub derive_debug: bool,
+
+    /// Emit the code for use as a standalone crate, rather than to be used as a
+    /// module.
+    #[structopt(long)]
+    pub standalone: bool,
 
     /// Only generate object-like macros that match any allowlist <regex>. If no
     /// allow list regexes are provided, then all macros will be generated.
@@ -55,22 +60,6 @@ pub struct Options {
     /// prevent non-member variables in the blocklist from being generated.
     #[structopt(long, parse(try_from_str = parse_regex))]
     blocklist_variable: Vec<Regex>,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            allowlist_macro: Vec::new(),
-            blocklist_macro: Vec::new(),
-            allowlist_type: Vec::new(),
-            blocklist_type: Vec::new(),
-            allowlist_function: Vec::new(),
-            blocklist_function: Vec::new(),
-            allowlist_variable: Vec::new(),
-            blocklist_variable: Vec::new(),
-            derive_debug: true,
-        }
-    }
 }
 
 impl Options {
@@ -134,6 +123,21 @@ pub struct TestOptions<'a> {
 }
 
 impl Options {
+    pub fn default_for_testing() -> Self {
+        Self {
+            derive_debug: true,
+            standalone: true,
+            allowlist_macro: Vec::new(),
+            blocklist_macro: Vec::new(),
+            allowlist_type: Vec::new(),
+            blocklist_type: Vec::new(),
+            allowlist_function: Vec::new(),
+            blocklist_function: Vec::new(),
+            allowlist_variable: Vec::new(),
+            blocklist_variable: Vec::new(),
+        }
+    }
+
     pub fn for_testing(options: &TestOptions) -> Self {
         Self {
             allowlist_macro: options.allowlist_macro.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),

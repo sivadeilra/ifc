@@ -177,56 +177,57 @@ impl SymbolMap {
             num_added += 1;
         };
 
-        let scope = ifc.global_scope();
-        for member_decl in ifc.iter_scope(scope)? {
-            match member_decl.tag() {
-                DeclSort::SCOPE => {
-                    let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
-                    if ifc.is_type_namespace(nested_scope.ty)? {
-                        // For now, we ignore namespaces.
-                    } else {
-                        // It's a nested struct/class.
-                        if nested_scope.name.tag() == NameSort::IDENTIFIER {
-                            let nested_name = ifc.get_string(nested_scope.name.index())?;
-                            add_symbol(nested_name, &mut self.global_symbols);
+        if let Some(scope) = ifc.global_scope() {
+            for member_decl in ifc.iter_scope(scope)? {
+                match member_decl.tag() {
+                    DeclSort::SCOPE => {
+                        let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
+                        if ifc.is_type_namespace(nested_scope.ty)? {
+                            // For now, we ignore namespaces.
                         } else {
-                            warn!("ignoring scope member named: {:?}", nested_scope.name);
+                            // It's a nested struct/class.
+                            if nested_scope.name.tag() == NameSort::IDENTIFIER {
+                                let nested_name = ifc.get_string(nested_scope.name.index())?;
+                                add_symbol(nested_name, &mut self.global_symbols);
+                            } else {
+                                warn!("ignoring scope member named: {:?}", nested_scope.name);
+                            }
                         }
                     }
-                }
 
-                DeclSort::ALIAS => {
-                    let alias = ifc.decl_alias().entry(member_decl.index())?;
-                    let alias_name = ifc.get_string(alias.name)?;
-                    add_symbol(alias_name, &mut self.global_symbols);
-                }
+                    DeclSort::ALIAS => {
+                        let alias = ifc.decl_alias().entry(member_decl.index())?;
+                        let alias_name = ifc.get_string(alias.name)?;
+                        add_symbol(alias_name, &mut self.global_symbols);
+                    }
 
-                DeclSort::ENUMERATION => {
-                    let en = ifc.decl_enum().entry(member_decl.index())?;
-                    let en_name = ifc.get_string(en.name)?;
-                    add_symbol(en_name, &mut self.global_symbols);
-                }
+                    DeclSort::ENUMERATION => {
+                        let en = ifc.decl_enum().entry(member_decl.index())?;
+                        let en_name = ifc.get_string(en.name)?;
+                        add_symbol(en_name, &mut self.global_symbols);
+                    }
 
-                DeclSort::INTRINSIC => {}
-                DeclSort::TEMPLATE => {}
-                DeclSort::EXPLICIT_INSTANTIATION => {}
-                DeclSort::EXPLICIT_SPECIALIZATION => {}
+                    DeclSort::INTRINSIC => {}
+                    DeclSort::TEMPLATE => {}
+                    DeclSort::EXPLICIT_INSTANTIATION => {}
+                    DeclSort::EXPLICIT_SPECIALIZATION => {}
 
-                DeclSort::FUNCTION => {
-                    let func_decl = ifc.decl_function().entry(member_decl.index())?;
-                    match func_decl.name.tag() {
-                        NameSort::IDENTIFIER => {
-                            let func_name = ifc.get_string(func_decl.name.index())?;
-                            add_symbol(func_name, &mut self.global_symbols);
-                        }
-                        _ => {
-                            warn!("ignoring function named: {:?}", func_decl.name);
+                    DeclSort::FUNCTION => {
+                        let func_decl = ifc.decl_function().entry(member_decl.index())?;
+                        match func_decl.name.tag() {
+                            NameSort::IDENTIFIER => {
+                                let func_name = ifc.get_string(func_decl.name.index())?;
+                                add_symbol(func_name, &mut self.global_symbols);
+                            }
+                            _ => {
+                                warn!("ignoring function named: {:?}", func_decl.name);
+                            }
                         }
                     }
-                }
 
-                _ => {
-                    warn!("ignoring unrecognized scope member: {:?}", member_decl);
+                    _ => {
+                        warn!("ignoring unrecognized scope member: {:?}", member_decl);
+                    }
                 }
             }
         }
@@ -293,16 +294,19 @@ impl<'a> Gen<'a> {
 }
 
 pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<TokenStream> {
-    info!("Global scope: {}", ifc.global_scope());
-
     let mut gen = Gen::new(ifc, symbol_map, options);
 
     let mut outputs = GenOutputs::default();
 
-    let renamed_decls = gen.rename_decls(ifc.global_scope())?;
-    gen.renamed_decls = renamed_decls;
+    if let Some(global_scope) = ifc.global_scope() {
+        let renamed_decls = gen.rename_decls(global_scope)?;
+        gen.renamed_decls = renamed_decls;
+    }
 
-    outputs.top.extend(gen.gen_crate_start()?);
+    if options.standalone {
+        outputs.top.extend(gen.gen_standalone_crate_header()?);
+    }
+    outputs.top.extend(gen.gen_common_module_header()?);
     gen.gen_macros(options.macro_filter(), &mut outputs.macros)?;
     gen.gen_types(
         options.type_filter(),
@@ -310,12 +314,14 @@ pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<T
         &mut outputs,
     )?;
     gen.find_orphans(options.type_filter(), &mut outputs)?;
-    gen.gen_functions(
-        options.function_filter(),
-        &mut outputs,
-        ifc.global_scope(),
-        "",
-    )?;
+    if let Some(global_scope) = ifc.global_scope() {
+        gen.gen_functions(
+            options.function_filter(),
+            &mut outputs,
+            global_scope,
+            "",
+        )?;
+    }
     outputs.finish()
 }
 
@@ -326,9 +332,7 @@ enum ScopeKind {
 }
 
 impl<'a> Gen<'a> {
-    fn gen_crate_start(&self) -> Result<TokenStream> {
-        let extern_crates = self.gen_extern_crate()?;
-
+    fn gen_standalone_crate_header(&self) -> Result<TokenStream> {
         Ok(quote! {
             //! This code was generated by `gen_rust` from C++ definitions, sourced through IFC.
             #![allow(non_camel_case_types)]
@@ -338,7 +342,13 @@ impl<'a> Gen<'a> {
             #![allow(unused_imports)]
             #![allow(improper_ctypes)]
             #![no_std]
+        })
+    }
 
+    fn gen_common_module_header(&self) -> Result<TokenStream> {
+        let extern_crates = self.gen_extern_crate()?;
+
+        Ok(quote! {
             #extern_crates
 
             #[repr(C)]
@@ -356,15 +366,19 @@ impl<'a> Gen<'a> {
         variable_filter: options::Filter,
         outputs: &mut GenOutputs,
     ) -> Result<()> {
-        self.gen_types_for_scope(
-            type_filter,
-            Some(variable_filter),
-            outputs,
-            self.ifc.global_scope(),
-            "",
-            50,
-            ScopeKind::Namespace,
-        )
+        if let Some(global_scope) = self.ifc.global_scope() {
+            self.gen_types_for_scope(
+                type_filter,
+                Some(variable_filter),
+                outputs,
+                global_scope,
+                "",
+                50,
+                ScopeKind::Namespace,
+            )
+        } else {
+            Ok(())
+        }
     }
 
     /// Walk all scopes and find types that appear to be compiler-generated.
@@ -823,7 +837,9 @@ impl<'a> Gen<'a> {
             Ok(())
         }
 
-        search_scope(ifc, &mut state, ifc.global_scope())?;
+        if let Some(global_scope) = ifc.global_scope() {
+            search_scope(ifc, &mut state, global_scope)?;
+        }
 
         for (i, value) in state.decl_scope_found.iter().enumerate() {
             if !*value {

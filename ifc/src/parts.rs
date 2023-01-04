@@ -2,7 +2,7 @@ use super::*;
 use anyhow::Result;
 use core::mem::size_of;
 use std::cmp::Ordering;
-use log::{debug, trace};
+use log::{debug, trace, warn};
 
 // Partition
 
@@ -101,7 +101,7 @@ where
         }
         Ordering::Less => {
             // Truncate each record.
-            println!(
+            warn!(
                 "loading partition {}, {} records, truncating records from {} bytes to {}",
                 part_name, num_records, record_size, expected_record_size
             );
@@ -115,7 +115,7 @@ where
         }
         Ordering::Greater => {
             // Zero-fill (implicitly) each record. Copy only what is valid.
-            println!(
+            warn!(
                 "loading partition {}, {} records, expanding records from {} bytes to {}",
                 part_name, num_records, record_size, expected_record_size
             );

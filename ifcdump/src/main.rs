@@ -103,7 +103,9 @@ fn main() -> Result<()> {
     if needs_scope {
         dump_scope_table(&ifc)?;
 
-        dump_scope(&ifc, ifc.global_scope(), &options, 20, Indent(0))?;
+        if let Some(global_scope) = ifc.global_scope() {
+            dump_scope(&ifc, global_scope, &options, 20, Indent(0))?;
+        }
     }
 
     // dump_attr_basic(&ifc)?;
@@ -126,7 +128,7 @@ fn dump_scopes(ifc: &Ifc) -> Result<()> {
 
 fn dump_scope_table(ifc: &Ifc) -> Result<()> {
     println!("Scopes table (flat):");
-    println!("    Global scope index: {}", ifc.global_scope());
+    println!("    Global scope index: {:?}", ifc.global_scope());
     for (i, decl_scope) in ifc.decl_scope().entries.iter().enumerate() {
         let scope_index = i + 1;
         let scope_name = ifc.get_name_string(decl_scope.name)?;

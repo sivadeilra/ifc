@@ -312,9 +312,11 @@ impl Ifc {
         Ok(ifc)
     }
 
-    pub fn global_scope(&self) -> ScopeIndex {
-        assert!(self.file_header.global_scope > 0);
-        self.file_header.global_scope
+    pub fn global_scope(&self) -> Option<ScopeIndex> {
+        match self.file_header.global_scope {
+            0 => None,
+            scope => Some(scope),
+        }
     }
 
     pub fn iter_scope(&self, scope: ScopeIndex) -> Result<IterScope<'_>> {

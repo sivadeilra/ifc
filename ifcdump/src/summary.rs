@@ -4,7 +4,9 @@ pub fn dump_summary(ifc: &Ifc) -> Result<()> {
     let unit = ifc.file_header().unit;
     println!("Unit = {} 0x{:x}", unit, unit);
     let mut totals = Totals::default();
-    count_totals_in_scope(ifc, &mut totals, ifc.global_scope())?;
+    if let Some(global_scope) = ifc.global_scope() {
+        count_totals_in_scope(ifc, &mut totals, global_scope)?;
+    }
 
     totals.object_macros = ifc.macro_object_like().entries.len() as u64;
     totals.function_macros = ifc.macro_function_like().entries.len() as u64;

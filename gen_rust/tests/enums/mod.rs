@@ -5,7 +5,7 @@ fn enums_test() {
     let c = case("enums_test");
     c.compile_cpp("enums_mod.ixx", include_str!("enums_mod.ixx"));
 
-    c.read_ifc_compile_to_rust(&[], "enums_mod.ifc", "enums_mod", Default::default());
+    c.read_ifc_compile_to_rust(&[], "enums_mod.ifc", "enums_mod", Options::default_for_testing());
 
     c.write_file("checker.rs", include_str!("checker.rs"));
 
