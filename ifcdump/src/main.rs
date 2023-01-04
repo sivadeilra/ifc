@@ -22,6 +22,15 @@ mod summary;
 
 fn main() -> Result<()> {
     let mut options = options::Options::from_args();
+    let filter_level = match options.verbosity {
+        0 => "error",
+        1 => "warn",
+        2 => "info",
+        3 => "debug",
+        _ => "trace",
+    };
+    let env = env_logger::Env::default().default_filter_or(filter_level);
+    env_logger::init_from_env(env);
 
     // If the user didn't specify anything, then show the summary by default.
     if !options.all

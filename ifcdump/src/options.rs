@@ -57,8 +57,14 @@ pub struct Options {
     #[structopt(long = "summary")]
     pub summary: bool,
 
-    #[structopt(long = "verbose")]
-    pub verbose: bool,
+    /// Output verbosity.
+    /// Default: errors.
+    /// -v: warnings.
+    /// -vv: info.
+    /// -vvv: debug.
+    /// -vvvv: trace.
+    #[structopt(short, parse(from_occurrences))]
+    pub verbosity: u8,
 
     /// Maximum number of results to print.
     #[structopt(long = "max", default_value = "1000000")]
