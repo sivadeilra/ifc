@@ -101,21 +101,22 @@ where
         }
         Ordering::Less => {
             // Truncate each record.
-            warn!(
+            trace!(
                 "loading partition {}, {} records, truncating records from {} bytes to {}",
                 part_name, num_records, record_size, expected_record_size
             );
+            let offset = record_size - expected_record_size;
             for (dst, src) in vec
                 .as_bytes_mut()
                 .chunks_exact_mut(expected_record_size)
                 .zip(part_data.chunks_exact(record_size))
             {
-                dst.copy_from_slice(&src[..expected_record_size]);
+                dst.copy_from_slice(&src[offset..]);
             }
         }
         Ordering::Greater => {
             // Zero-fill (implicitly) each record. Copy only what is valid.
-            warn!(
+            trace!(
                 "loading partition {}, {} records, expanding records from {} bytes to {}",
                 part_name, num_records, record_size, expected_record_size
             );
