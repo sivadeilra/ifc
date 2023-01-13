@@ -1,9 +1,10 @@
 #![forbid(unused_must_use)]
 
-use gen_rust::{ Options, TestOptions };
+use gen_rust::{Options, TestOptions};
 use ifc::Ifc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
 
 mod enums;
 mod headers;
@@ -11,6 +12,8 @@ mod vars;
 
 // It's a bit strange that we read this environment variable at compilation time.
 const CARGO_TARGET_TMPDIR: &str = env!("CARGO_TARGET_TMPDIR");
+
+static HAS_SEEN_ERROR: AtomicBool = AtomicBool::new(false);
 
 struct Case {
     case_tmp_dir: PathBuf,
@@ -101,6 +104,16 @@ impl Case {
         rust_crate_name: &str,
         ifc_options: Options,
     ) {
+        let mut builder = env_logger::builder();
+        builder.is_test(true).filter_level(log::LevelFilter::Debug);
+        // If the logger is already set up by a previous test run, then setting it up again will
+        // fail, so ignore any errors.
+        let _ = log::set_boxed_logger(Box::new(ErrorMonitoringLogger {
+            set_on_error: &HAS_SEEN_ERROR,
+            forward_to: builder.build(),
+        }));
+        log::set_max_level(log::LevelFilter::Debug);
+
         let ifc = self.read_ifc(ifc_filename);
 
         let rust_source_file_name = format!("{}.rs", rust_crate_name);
@@ -127,10 +140,33 @@ impl Case {
         rustc.arg(&rust_source_path);
         self.spawn_and_wait(rustc);
         println!("Compiled IFC-to-Rust crate.");
+
+        assert!(
+            !HAS_SEEN_ERROR.swap(false, std::sync::atomic::Ordering::Relaxed),
+            "An unexpected error was logged"
+        );
     }
 }
 
-#[static_init::dynamic]
-static TEST_LOGGER: () = {
-    env_logger::init();
-};
+struct ErrorMonitoringLogger<T: log::Log> {
+    set_on_error: &'static AtomicBool,
+    forward_to: T,
+}
+
+impl<T: log::Log> log::Log for ErrorMonitoringLogger<T> {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.forward_to.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        if record.level() <= log::Level::Error {
+            self.set_on_error
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.forward_to.log(record)
+    }
+
+    fn flush(&self) {
+        self.forward_to.flush()
+    }
+}

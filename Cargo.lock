@@ -151,7 +151,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_derive",
- "static_init",
  "structopt",
  "syn",
  "toml",

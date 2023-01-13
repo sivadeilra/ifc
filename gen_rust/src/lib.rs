@@ -5,15 +5,17 @@
 
 use anyhow::{bail, Result};
 use ifc::*;
-use log::{debug, error, info, trace, warn};
-pub use options::{ Options, TestOptions};
+use log::{debug, info, trace, warn};
+pub use options::{Options, TestOptions};
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::*;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use syn::Ident;
+use type_discovery::TypeDiscovery;
 
 mod config;
 mod enums;
@@ -23,7 +25,21 @@ mod options;
 mod pp;
 mod structs;
 mod ty;
+mod type_discovery;
 mod vars;
+
+#[macro_export]
+macro_rules! log_error {
+    ($code:block -> $result_ty:ty, $context:expr) => {
+        match (|| -> Result<$result_ty> { $code })() {
+            Ok(value) => Some(value),
+            Err(err) => {
+                log::error!("{:#}", err.context($context));
+                None
+            }
+        }
+    };
+}
 
 // This is an alias into the `refs` table.
 type RefIndex = usize;
@@ -39,84 +55,29 @@ struct Gen<'a> {
 }
 
 #[derive(Default)]
-struct GenOutputs<'a> {
+struct GenOutputs {
     // module-wide attribute
     top: TokenStream,
 
     // NOTE: We use HashMap instead of BTreeMap since it is faster in general
     // and we only care about sorting by key when we generate the final stream.
-    types: TokenStream,
-    consts: TokenStream,
-    statics: TokenStream,
-    macros: HashMap<&'a str, Result<TokenStream>>,
-    aliases: TokenStream,
-    extern_cdecl: TokenStream,
-    extern_stdcall: TokenStream,
-    extern_fastcall: TokenStream,
+    scopes: Vec<TokenStream>,
+    macros: Vec<TokenStream>,
 }
 
-impl<'a> GenOutputs<'a> {
-    fn finish(self) -> Result<TokenStream> {
-        let mut had_errors = false;
-
+impl GenOutputs {
+    fn finish(self) -> TokenStream {
         let mut output = self.top;
-        output.extend(self.types);
-        let mut macros = self.macros.iter().collect::<Vec<_>>();
-        macros.sort_by_key(|(&k, _)| k);
-        output.append_all(macros.iter().filter_map(|(_, v)| {
-            match v {
-                Ok(tokens) => Some(tokens),
-                Err(err) => {
-                    error!("{:#}", err);
-                    had_errors = true;
-                    None
-                }
-            }
-        }));
-        output.extend(self.consts);
-        output.extend(self.statics);
-
-        let extern_cdecl = self.extern_cdecl;
-        let extern_stdcall = self.extern_stdcall;
-        let extern_fastcall = self.extern_fastcall;
-
-        if !extern_cdecl.is_empty() {
-            output.extend(quote! {
-                extern "C" {
-                    #extern_cdecl
-                }
-            });
-        }
-
-        if !extern_stdcall.is_empty() {
-            output.extend(quote! {
-                extern "stdcall" {
-                    #extern_stdcall
-                }
-            });
-        }
-
-        if !extern_fastcall.is_empty() {
-            output.extend(quote! {
-                extern "fastcall" {
-                    #extern_fastcall
-                }
-            });
-        }
-
-        let aliases = self.aliases;
+        output.extend(self.scopes);
+        output.extend(self.macros);
         output.extend(quote! {
             pub mod __typedefs {
                 use super::*;
-                #aliases
             }
             pub use __typedefs::*;
         });
 
-        if had_errors {
-            bail!("Encountered errors during code generation");
-        }
-        Ok(output)
+        output
     }
 }
 
@@ -239,7 +200,10 @@ impl SymbolMap {
 
         // Add function-like macros that pass the filter.
         for func_like in ifc.macro_function_like().entries.iter() {
-            add_symbol(ifc.get_string(func_like.name)?, &mut self.function_like_macros);
+            add_symbol(
+                ifc.get_string(func_like.name)?,
+                &mut self.function_like_macros,
+            );
         }
 
         info!(
@@ -296,39 +260,31 @@ impl<'a> Gen<'a> {
 pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<TokenStream> {
     let mut gen = Gen::new(ifc, symbol_map, options);
 
-    let mut outputs = GenOutputs::default();
-
     if let Some(global_scope) = ifc.global_scope() {
         let renamed_decls = gen.rename_decls(global_scope)?;
         gen.renamed_decls = renamed_decls;
     }
+
+    let filtered_scope_to_contents = TypeDiscovery::walk_global_scope(
+        ifc,
+        &gen.symbol_map,
+        &gen.renamed_decls,
+        options.type_filter(),
+        options.function_filter(),
+        options.variable_filter(),
+    );
+
+    let mut outputs = GenOutputs::default();
 
     if options.standalone {
         outputs.top.extend(gen.gen_standalone_crate_header()?);
     }
     outputs.top.extend(gen.gen_common_module_header()?);
     gen.gen_macros(options.macro_filter(), &mut outputs.macros)?;
-    gen.gen_types(
-        options.type_filter(),
-        options.variable_filter(),
-        &mut outputs,
-    )?;
-    gen.find_orphans(options.type_filter(), &mut outputs)?;
-    if let Some(global_scope) = ifc.global_scope() {
-        gen.gen_functions(
-            options.function_filter(),
-            &mut outputs,
-            global_scope,
-            "",
-        )?;
-    }
-    outputs.finish()
-}
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum ScopeKind {
-    Namespace,
-    Type,
+    gen.gen_types(&filtered_scope_to_contents, &mut outputs.scopes)?;
+    gen.find_orphans(&filtered_scope_to_contents, &mut outputs.scopes)?;
+    Ok(outputs.finish())
 }
 
 impl<'a> Gen<'a> {
@@ -362,19 +318,18 @@ impl<'a> Gen<'a> {
     #[inline(never)]
     fn gen_types(
         &self,
-        type_filter: options::Filter,
-        variable_filter: options::Filter,
-        outputs: &mut GenOutputs,
+        filtered_scope_to_contents: &HashMap<DeclIndex, HashMap<DeclIndex, Cow<'_, str>>>,
+        outputs: &mut Vec<TokenStream>,
     ) -> Result<()> {
         if let Some(global_scope) = self.ifc.global_scope() {
-            self.gen_types_for_scope(
-                type_filter,
-                Some(variable_filter),
+            self.gen_members_for_scope(
+                filtered_scope_to_contents,
+                filtered_scope_to_contents
+                    .get(&DeclIndex(0))
+                    .expect("Must have an entry for the global scope"),
                 outputs,
                 global_scope,
-                "",
                 50,
-                ScopeKind::Namespace,
             )
         } else {
             Ok(())
@@ -506,17 +461,15 @@ impl<'a> Gen<'a> {
         Ok(output)
     }
 
-    /// Recursively walks a scope and generates type definitions for it.
+    /// Recursively walks a scope and generates member definitions for it.
     #[inline(never)]
-    fn gen_types_for_scope(
+    fn gen_members_for_scope(
         &self,
-        type_filter: options::Filter,
-        variable_filter: Option<options::Filter>,
-        outputs: &mut GenOutputs,
+        filtered_scope_to_contents: &HashMap<DeclIndex, HashMap<DeclIndex, Cow<'_, str>>>,
+        filtered_contents: &HashMap<DeclIndex, Cow<'_, str>>,
+        outputs: &mut Vec<TokenStream>,
         parent_scope: ScopeIndex,
-        parent_scope_name: &str,
         max_depth: u32,
-        _scope_kind: ScopeKind,
     ) -> Result<()> {
         debug!(
             "Scope #{}{}",
@@ -532,150 +485,102 @@ impl<'a> Gen<'a> {
             bail!("Max depth exceeded!");
         }
 
-        let _max_depth = max_depth - 1;
+        let mut names_map = HashMap::new();
 
-        let mut counter: u32 = 0;
-
-        for member_decl_index in self.ifc.iter_scope(parent_scope)? {
-            match member_decl_index.tag() {
-                DeclSort::ALIAS => {
-                    if false {
+        for (name, member_decl_index) in self
+            .ifc
+            .iter_scope(parent_scope)?
+            .filter_map(|item| filtered_contents.get(&item).zip(Some(item)))
+        {
+            log_error! { {
+                match member_decl_index.tag() {
+                    DeclSort::ALIAS => {
                         let decl_alias = self.ifc.decl_alias().entry(member_decl_index.index())?;
-                        let mut alias_name = self.ifc.get_string(decl_alias.name)?.to_string();
-                        fixup_anon_names(&mut alias_name, &mut counter);
 
-                        if self.symbol_map.is_symbol_in(&alias_name) {
-                            debug!("alias {} is defined in external crate", alias_name);
-                        } else if type_filter
-                            .is_allowed_qualified_name(parent_scope_name, &alias_name)
-                        {
-                            debug!("alias {} - adding", alias_name);
-                            let alias_ident = syn::Ident::new(&alias_name, Span::call_site());
-                            let aliasee_tokens = self.get_type_tokens(decl_alias.aliasee)?;
+                        debug!("alias {} - adding", &name);
+                        let alias_ident = syn::Ident::new(&name, Span::call_site());
+                        let aliasee_tokens = self.get_type_tokens(decl_alias.aliasee)?;
 
-                            outputs.aliases.extend(quote! {
-                                pub type #alias_ident = #aliasee_tokens;
-                            });
-                        }
+                        outputs.push(quote! {
+                            pub type #alias_ident = #aliasee_tokens;
+                        });
                     }
-                }
 
-                DeclSort::FUNCTION => {
-                    // Functions are processed in a later pass.
-                }
+                    DeclSort::FUNCTION => {
+                        outputs.push(self.gen_function(member_decl_index, &mut names_map, name)?);
+                    }
 
-                DeclSort::METHOD => {}
+                    DeclSort::SCOPE => {
+                        let nested_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
 
-                DeclSort::SCOPE => {
-                    let nested_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
-
-                    // What kind of scope is it?
-                    if self.ifc.is_type_namespace(nested_scope.ty)? {
-                        // We do not yet process nested namespaces.
-                    } else {
-                        // It's a nested struct/class.
-                        if let Some((struct_tokens, struct_name)) =
-                            self.gen_struct(member_decl_index, parent_scope_name, type_filter)?
-                        {
-                            outputs.types.extend(struct_tokens);
-
-                            if nested_scope.initializer != 0 {
-                                debug!(
-                                    "gen_types_for_scope: recursing, to scope #{} (zero-based)",
-                                    nested_scope.initializer
-                                );
-                                self.gen_types_for_scope(
-                                    type_filter,
-                                    None,
-                                    outputs,
+                        // What kind of scope is it?
+                        info!("scope {} - {}", name, self.ifc.is_type_namespace(nested_scope.ty)?);
+                        if self.ifc.is_type_namespace(nested_scope.ty)? {
+                            if let Some(filtered_contents) = filtered_scope_to_contents.get(&member_decl_index) {
+                                let mut members = Vec::new();
+                                let ident = Ident::new(name, Span::call_site());
+                                self.gen_members_for_scope(
+                                    filtered_scope_to_contents,
+                                    filtered_contents,
+                                    &mut members,
                                     nested_scope.initializer,
-                                    &format!("{}::{}", parent_scope_name, struct_name),
                                     max_depth - 1,
-                                    ScopeKind::Type,
                                 )?;
+                                if !members.is_empty() {
+                                    outputs.push(
+                                        quote!{
+                                            mod #ident {
+                                                #(#members
+                                                )*
+                                            }
+                                        }
+                                    );
+                                } else {
+                                    bail!("Empty namepsace");
+                                }
                             } else {
-                                debug!("gen_types_for_scope: not recursing, because this is a forward decl only");
+                                bail!("filter not found");
                             }
+                        } else {
+                            // It's a nested struct/class.
+                            outputs.push(self.gen_struct(member_decl_index, name)?);
                         }
                     }
-                }
 
-                DeclSort::ENUMERATION => {
-                    let en = self.ifc.decl_enum().entry(member_decl_index.index())?;
-                    let en_name = self.ifc.get_string(en.name)?;
-                    if self.symbol_map.is_symbol_in(en_name) {
-                        debug!("enum {} - defined in external crate", en_name);
-                    } else if type_filter.is_allowed_qualified_name(parent_scope_name, en_name) {
-                        debug!("enum {} - emitting", en_name);
-                        let t = self.gen_enum(en)?;
-                        outputs.types.extend(t);
+                    DeclSort::ENUMERATION => {
+                        let en = self.ifc.decl_enum().entry(member_decl_index.index())?;
+                        debug!("enum {} - emitting", name);
+                        outputs.push(self.gen_enum(en)?);
+                    }
+
+                    DeclSort::VARIABLE => {
+                        outputs.push(self.gen_variable(
+                            member_decl_index.index(),
+                            name,
+                        )?);
+                    }
+
+                    DeclSort::METHOD
+                    | DeclSort::FIELD
+                    | DeclSort::BITFIELD => {
+                        panic!("Methods and fields must only be in types");
+                    }
+
+                    DeclSort::INTRINSIC
+                    | DeclSort::TEMPLATE
+                    | DeclSort::CONCEPT
+                    | DeclSort::EXPLICIT_INSTANTIATION
+                    | DeclSort::USING_DECLARATION
+                    | DeclSort::PARTIAL_SPECIALIZATION
+                    | DeclSort::EXPLICIT_SPECIALIZATION => {}
+
+                    _ => {
+                        nyi!();
+                        info!("unknown decl: {:?}", member_decl_index);
                     }
                 }
-
-                DeclSort::VARIABLE => {
-                    self.gen_variable(
-                        member_decl_index.index(),
-                        &variable_filter,
-                        parent_scope_name,
-                        outputs,
-                    )?;
-                }
-
-                DeclSort::INTRINSIC
-                | DeclSort::TEMPLATE
-                | DeclSort::CONCEPT
-                | DeclSort::EXPLICIT_INSTANTIATION
-                | DeclSort::FIELD
-                | DeclSort::BITFIELD
-                | DeclSort::USING_DECLARATION
-                | DeclSort::PARTIAL_SPECIALIZATION
-                | DeclSort::EXPLICIT_SPECIALIZATION => {}
-
-                _ => {
-                    nyi!();
-                    info!("unknown decl: {:?}", member_decl_index);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Recursively walks a scope and generates type definitions for it.
-    #[inline(never)]
-    fn gen_functions(
-        &self,
-        filter: options::Filter,
-        outputs: &mut GenOutputs,
-        parent_scope: ScopeIndex,
-        parent_scope_name: &str,
-    ) -> Result<()> {
-        let mut names_map: HashMap<Ident, u32> = HashMap::new();
-
-        let mut _num_errors: u32 = 0;
-
-        for member in self.ifc.iter_scope(parent_scope)? {
-            if let DeclSort::FUNCTION = member.tag() {
-                match self.gen_function(member, filter, &mut names_map, parent_scope_name) {
-                    Ok(Some((convention, func_tokens))) => {
-                        // Write the extern function declaration to the right extern "X" { ... } block.
-                        let extern_block = match convention {
-                            CallingConvention::Std => &mut outputs.extern_stdcall,
-                            CallingConvention::Cdecl => &mut outputs.extern_cdecl,
-                            CallingConvention::Fast => &mut outputs.extern_fastcall,
-                            _ => bail!(
-                                "Function calling convention {:?} is not supported",
-                                convention
-                            ),
-                        };
-                        extern_block.extend(func_tokens);
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        _num_errors += 1;
-                    }
-                }
-            }
+                Ok(())
+            } -> (), format!("Generating member {:?} {}", member_decl_index.tag(), name) };
         }
 
         Ok(())
@@ -685,8 +590,8 @@ impl<'a> Gen<'a> {
     fn emit_forward_decl_scope(
         &self,
         member_decl_index: DeclIndex,
-        filter: options::Filter,
-        outputs: &mut GenOutputs,
+        name: &str,
+        outputs: &mut Vec<TokenStream>,
     ) -> Result<()> {
         let decl_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
         if decl_scope.initializer != 0 {
@@ -694,9 +599,8 @@ impl<'a> Gen<'a> {
             return Ok(());
         }
 
-        if let Some((t, _)) = self.gen_struct(member_decl_index, "", filter)? {
-            outputs.types.extend(t);
-        }
+        outputs.push(self.gen_struct(member_decl_index, name)?);
+
         Ok(())
     }
 }
@@ -787,7 +691,11 @@ pub struct SymbolRemaps {
 
 impl<'a> Gen<'a> {
     /// Walk all the scopes, see if there are declarations that are not part of any scope.
-    fn find_orphans(&self, type_filter: options::Filter, outputs: &mut GenOutputs) -> Result<()> {
+    fn find_orphans(
+        &self,
+        filtered_scope_to_contents: &HashMap<DeclIndex, HashMap<DeclIndex, Cow<'_, str>>>,
+        outputs: &mut Vec<TokenStream>,
+    ) -> Result<()> {
         let ifc = self.ifc;
 
         struct State {
@@ -842,25 +750,30 @@ impl<'a> Gen<'a> {
         }
 
         for (i, value) in state.decl_scope_found.iter().enumerate() {
-            if !*value {
-                let nested_scope = ifc.decl_scope().entry(i as u32)?;
-                let nested_scope_name = ifc.get_name_string(nested_scope.name)?;
-                debug!(
-                    "scope #{} not found:  {}   forward decl? {}",
-                    i,
-                    nested_scope_name,
-                    nested_scope.initializer == 0
-                );
+            log_error! { {
+                if !*value {
+                    let nested_scope = ifc.decl_scope().entry(i as u32)?;
+                    if let Some(filtered_output) = filtered_scope_to_contents.get(&nested_scope.home_scope)
+                        && let Some(name) = filtered_output.get(&DeclIndex(i as u32)) {
+                        debug!(
+                            "scope #{} not found:  {}   forward decl? {}",
+                            i,
+                            name,
+                            nested_scope.initializer == 0
+                        );
 
-                // If it looks like a forward declaration, then let's emit a type for it.
-                if nested_scope.initializer == 0 {
-                    self.emit_forward_decl_scope(
-                        DeclIndex::new(DeclSort::SCOPE, i as u32),
-                        type_filter,
-                        outputs,
-                    )?;
+                        // If it looks like a forward declaration, then let's emit a type for it.
+                        if nested_scope.initializer == 0 {
+                            self.emit_forward_decl_scope(
+                                DeclIndex::new(DeclSort::SCOPE, i as u32),
+                                name,
+                                outputs,
+                            )?;
+                        }
+                    }
                 }
-            }
+                Ok(())
+            } -> (), format!("Generating forward decl id {}", i) };
         }
 
         Ok(())

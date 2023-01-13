@@ -112,14 +112,14 @@ impl<'a> Filter<'a> {
 
 #[derive(Default)]
 pub struct TestOptions<'a> {
-    pub allowlist_macro: &'a[&'static str],
-    pub blocklist_macro: &'a[&'static str],
-    pub allowlist_type: &'a[&'static str],
-    pub blocklist_type: &'a[&'static str],
-    pub allowlist_function: &'a[&'static str],
-    pub blocklist_function: &'a[&'static str],
-    pub allowlist_variable: &'a[&'static str],
-    pub blocklist_variable: &'a[&'static str],
+    pub allowlist_macro: &'a [&'static str],
+    pub blocklist_macro: &'a [&'static str],
+    pub allowlist_type: &'a [&'static str],
+    pub blocklist_type: &'a [&'static str],
+    pub allowlist_function: &'a [&'static str],
+    pub blocklist_function: &'a [&'static str],
+    pub allowlist_variable: &'a [&'static str],
+    pub blocklist_variable: &'a [&'static str],
 }
 
 impl Options {
@@ -140,14 +140,46 @@ impl Options {
 
     pub fn for_testing(options: &TestOptions) -> Self {
         Self {
-            allowlist_macro: options.allowlist_macro.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            blocklist_macro: options.blocklist_macro.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            allowlist_type: options.allowlist_type.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            blocklist_type: options.blocklist_type.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            allowlist_function: options.allowlist_function.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            blocklist_function: options.blocklist_function.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            allowlist_variable: options.allowlist_variable.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
-            blocklist_variable: options.blocklist_variable.iter().map(|item| parse_regex(item).unwrap()).collect::<Vec<_>>(),
+            allowlist_macro: options
+                .allowlist_macro
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            blocklist_macro: options
+                .blocklist_macro
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            allowlist_type: options
+                .allowlist_type
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            blocklist_type: options
+                .blocklist_type
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            allowlist_function: options
+                .allowlist_function
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            blocklist_function: options
+                .blocklist_function
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            allowlist_variable: options
+                .allowlist_variable
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
+            blocklist_variable: options
+                .blocklist_variable
+                .iter()
+                .map(|item| parse_regex(item).unwrap())
+                .collect::<Vec<_>>(),
             ..Default::default()
         }
     }

@@ -51,15 +51,43 @@ enum FooFlavor {
     HighGround,
 };
 
+enum class IcecreamFlavor {
+    Chocolate,
+    Vanilla,
+};
+
 class Bassy {
     public:
     int count;
 };
 
+struct UsedAsField {
+    int v;
+};
+
 class Classy : public Bassy, public IWhatever {
     public:
     float klass;
+    UsedAsField uaf;
 };
 
-int get_foo(FooId_t id);
-void set_foo(int x);
+extern "C" int get_foo(FooId_t id);
+extern "C" void set_foo(int x);
+
+extern "C" void add_flavor(FooFlavor ff);
+extern "C" void scoop_flavor(IcecreamFlavor i);
+
+enum class Directions {
+    Up,
+    Down,
+};
+
+namespace N1 {
+    namespace N2 {
+        static constexpr Directions d1 = Directions::Up;
+    }
+}
+
+namespace N1::N2::N3 {
+    static constexpr int d2 = 3;
+}

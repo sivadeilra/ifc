@@ -1,35 +1,13 @@
 use super::*;
 
 impl<'a> Gen<'a> {
-    pub fn gen_struct(
-        &self,
-        member_decl_index: DeclIndex,
-        parent_scope_name: &str,
-        filter: options::Filter,
-    ) -> Result<Option<(TokenStream, String)>> {
+    pub fn gen_struct(&self, member_decl_index: DeclIndex, name: &str) -> Result<TokenStream> {
         let nested_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
 
-        // What kind of scope is it?
-        if self.ifc.is_type_namespace(nested_scope.ty)? {
-            // We do not yet process namespaces.
-            return Ok(None);
-        }
-        // It's a nested struct/class.
+        // Do not call gen_struct with a namespace.
+        assert!(!self.ifc.is_type_namespace(nested_scope.ty)?);
 
-        let nested_scope_name: String;
-        let nested_scope_ident: Ident = if let Some(id) = self.renamed_decls.get(&member_decl_index)
-        {
-            nested_scope_name = id.to_string();
-            id.clone()
-        } else {
-            nested_scope_name = self.ifc.get_string(nested_scope.name.index())?.to_string();
-            Ident::new(&nested_scope_name, Span::call_site())
-        };
-
-        // Check to see if its filtered.
-        if !filter.is_allowed_qualified_name(&nested_scope_name, parent_scope_name) {
-            return Ok(None);
-        }
+        let nested_scope_ident: Ident = Ident::new(name, Span::call_site());
 
         // If the initializer is NULL (not empty, but NULL), then this is a forward declaration
         // with no definition.
@@ -40,33 +18,21 @@ impl<'a> Gen<'a> {
 
             let use_extern_types = false;
             if use_extern_types {
-                return Ok(Some((
-                    quote! {
-                        extern "C" {
-                            pub type #nested_scope_ident;
-                        }
-                    },
-                    nested_scope_name,
-                )));
+                return Ok(quote! {
+                    extern "C" {
+                        pub type #nested_scope_ident;
+                    }
+                });
             } else {
-                return Ok(Some((
-                    quote! {
-                        #[repr(transparent)]
-                        pub struct #nested_scope_ident(pub u8);
-                    },
-                    nested_scope_name,
-                )));
+                return Ok(quote! {
+                    #[repr(transparent)]
+                    pub struct #nested_scope_ident(pub u8);
+                });
             }
         }
 
-        // If the type is defined in a different crate, then do not emit a definition.
-        if self.symbol_map.is_symbol_in(&nested_scope_name) {
-            debug!("struct {} - defined in external crate", nested_scope_name);
-            return Ok(None);
-        }
-
         // Emit the definition for this struct.
-        debug!("struct {} - emitting", nested_scope_name);
+        debug!("struct {} - emitting", name);
         let mut struct_contents = TokenStream::new();
 
         if nested_scope.base.0 != 0 {
@@ -114,8 +80,7 @@ impl<'a> Gen<'a> {
                                 debug!("desig_decl = {:?}", desig_decl);
 
                                 if let DeclSort::SCOPE = desig_decl.tag() {
-                                    let scope =
-                                        self.ifc.decl_scope().entry(desig_decl.index())?;
+                                    let scope = self.ifc.decl_scope().entry(desig_decl.index())?;
                                     let scope_name = self.ifc.get_name_string(scope.name)?;
                                     debug!("... {} {:?} ({:?})", scope_name, desig_decl, scope)
                                 }
@@ -160,15 +125,12 @@ impl<'a> Gen<'a> {
         let doc = format!("Scope: {:?}", member_decl_index);
 
         debug!("emitting struct {}", nested_scope_ident);
-        Ok(Some((
-            quote! {
+        Ok(quote! {
                 #[doc = #doc]
                 #[repr(C)]
                 pub struct #nested_scope_ident {
                     #struct_contents
                 }
-            },
-            nested_scope_name,
-        )))
+        })
     }
 }
