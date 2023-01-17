@@ -22,3 +22,5 @@ void scoop_flavor(IcecreamFlavor i) {
     assert(i == IcecreamFlavor::Chocolate);
 }
 
+void all_the_flavor(UseAsPointer*, UseAsReference&, UseAsReference2&&, UseAsArray[1], const UseAsQualifiedRef&) {}
+

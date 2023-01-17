@@ -19,13 +19,17 @@ fn main() {
         uaf: UsedAsField { v: -1 },
     };
 
-    // Neither FooFlavor nor IcecreamFlavor were explicitly allow listed, but
-    // since they are used as parameter, they get pulled in.
     unsafe {
+        // Neither FooFlavor nor IcecreamFlavor were explicitly allow listed, but
+        // since they are used as parameter, they get pulled in.
         // C-style enum
         add_flavor(Mocha);
         // enum class
         scoop_flavor(IcecreamFlavor::Chocolate);
+
+        // There seem to be bugs in the way that arrays and `const T&` are represented in the IFC.
+        // all_the_flavor(&mut UseAsPointer{}, &mut UseAsReference{}, &mut (&mut UseAsReference2{} as *mut _), [UseAsArray{}], &UseAsQualifiedRef{});
+        all_the_flavor(&mut UseAsPointer{}, &mut UseAsReference{}, &mut (&mut UseAsReference2{} as *mut _), [UseAsArray{}].as_ptr(), &mut UseAsQualifiedRef{});
     }
 
     // Namespace support is currently broken.

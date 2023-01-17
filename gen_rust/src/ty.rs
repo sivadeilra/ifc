@@ -162,13 +162,21 @@ impl<'a> Gen<'a> {
             TypeSort::LVALUE_REFERENCE => {
                 let lvalue_ref = *self.ifc.type_lvalue_reference().entry(type_index.index())?;
                 let tokens = self.get_type_tokens(lvalue_ref)?;
-                quote!(*mut #tokens)
+                if const_qual {
+                    quote! {*const #tokens}
+                } else {
+                    quote! {*mut #tokens}
+                }
             }
 
             TypeSort::RVALUE_REFERENCE => {
                 let rvalue_ref = *self.ifc.type_rvalue_reference().entry(type_index.index())?;
                 let tokens = self.get_type_tokens(rvalue_ref)?;
-                quote!(*mut #tokens)
+                if const_qual {
+                    quote! {*const *const #tokens}
+                } else {
+                    quote! {*mut *mut #tokens}
+                }
             }
 
             TypeSort::FUNCTION => {

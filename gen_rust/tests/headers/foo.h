@@ -77,6 +77,14 @@ extern "C" void set_foo(int x);
 extern "C" void add_flavor(FooFlavor ff);
 extern "C" void scoop_flavor(IcecreamFlavor i);
 
+struct UseAsPointer{};
+struct UseAsReference{};
+struct UseAsReference2{};
+struct UseAsArray{};
+struct UseAsQualifiedRef{};
+
+extern "C" void all_the_flavor(UseAsPointer*, UseAsReference&, UseAsReference2&&, UseAsArray[1], const UseAsQualifiedRef&);
+
 enum class Directions {
     Up,
     Down,

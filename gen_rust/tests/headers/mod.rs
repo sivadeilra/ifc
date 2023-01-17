@@ -30,7 +30,9 @@ fn headers_test() {
         "foo.h.ifc",
         "foo",
         Options::for_testing(&TestOptions {
-            blocklist_macro: &["FOO_DECREMENT"],
+            blocklist_macro: &["^FOO_DECREMENT$"],
+            allowlist_type: &["^::Classy$", "^::Foo.*$"],
+            allowlist_function: &["^::[a-z_]+*_flavor$"],
             ..Default::default()
         }),
     );
@@ -39,12 +41,7 @@ fn headers_test() {
         &[("foo", "foo.h.ifc")],
         "bar.h.ifc",
         "bar",
-        Options::for_testing(&TestOptions {
-            blocklist_macro: &["^FOO_DECREMENT$"],
-            allowlist_type: &["^Classy$"],
-            allowlist_function: &["^[a-z]+*_flavor$"],
-            ..Default::default()
-        }),
+        Options::default_for_testing(),
     );
 
     c.write_file("checker.rs", include_str!("checker.rs"));

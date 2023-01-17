@@ -1,4 +1,5 @@
 use anyhow::Context;
+use log::debug;
 use regex::Regex;
 use structopt::StructOpt;
 
@@ -92,7 +93,7 @@ impl Options {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Filter<'a> {
     allowlist: &'a Vec<Regex>,
     blocklist: &'a Vec<Regex>,
@@ -100,8 +101,20 @@ pub struct Filter<'a> {
 
 impl<'a> Filter<'a> {
     pub fn is_allowed(&self, name: &str) -> bool {
-        (self.allowlist.is_empty() || self.allowlist.iter().any(|regex| regex.is_match(name)))
-            && !self.blocklist.iter().any(|regex| regex.is_match(name))
+        if !self.allowlist.is_empty() {
+            if let Some(matching_filter) = self.allowlist.iter().find(|regex| regex.is_match(name)) {
+                debug!("Item {} allowed by {:?}", name, matching_filter);
+            } else {
+                return false;
+            }
+        }
+
+        if let Some(matching_filter) = self.blocklist.iter().find(|regex| regex.is_match(name)) {
+            debug!("Item {} blocked by {:?}", name, matching_filter);
+            false
+        } else {
+            true
+        }
     }
 
     pub fn is_allowed_qualified_name(&self, name: &str, parent_name: &str) -> bool {
@@ -180,7 +193,7 @@ impl Options {
                 .iter()
                 .map(|item| parse_regex(item).unwrap())
                 .collect::<Vec<_>>(),
-            ..Default::default()
+            ..Self::default_for_testing()
         }
     }
 }
