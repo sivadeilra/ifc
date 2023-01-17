@@ -83,7 +83,7 @@ struct UseAsReference2{};
 struct UseAsArray{};
 struct UseAsQualifiedRef{};
 
-extern "C" void all_the_flavor(UseAsPointer*, UseAsReference&, UseAsReference2&&, UseAsArray[1], const UseAsQualifiedRef&);
+extern "C" void all_the_flavor(UseAsPointer*, UseAsReference&, UseAsReference2&&, const UseAsArray(&)[1], const UseAsQualifiedRef&);
 
 enum class Directions {
     Up,

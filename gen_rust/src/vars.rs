@@ -11,7 +11,7 @@ impl<'a> Gen<'a> {
 
         if is_const {
             let ty_tokens = self.get_type_tokens(var.ty)?;
-            let init_tokens = self.gen_expr_tokens(var.ty, var.initializer)?;
+            let init_tokens = self.gen_expr_tokens(Some(var.ty), var.initializer)?;
             Ok(quote! {
                 pub const #var_ident: #ty_tokens = #init_tokens;
             })

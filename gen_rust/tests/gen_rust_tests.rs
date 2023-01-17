@@ -105,14 +105,14 @@ impl Case {
         ifc_options: Options,
     ) {
         let mut builder = env_logger::builder();
-        builder.is_test(true).filter_level(log::LevelFilter::Debug);
+        builder.is_test(true).filter_level(log::LevelFilter::Trace);
         // If the logger is already set up by a previous test run, then setting it up again will
         // fail, so ignore any errors.
         let _ = log::set_boxed_logger(Box::new(ErrorMonitoringLogger {
             set_on_error: &HAS_SEEN_ERROR,
             forward_to: builder.build(),
         }));
-        log::set_max_level(log::LevelFilter::Debug);
+        log::set_max_level(log::LevelFilter::Trace);
 
         let ifc = self.read_ifc(ifc_filename);
 

@@ -143,7 +143,6 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
 
     /// Walks a type expression and includes any declarations required to represent that type.
     fn include_type(&mut self, index: TypeIndex) -> Result<()> {
-        debug!("{:?}", index.tag());
         match index.tag() {
             TypeSort::ARRAY => {
                 // Include the element type.

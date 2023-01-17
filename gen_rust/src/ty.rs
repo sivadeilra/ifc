@@ -1,25 +1,25 @@
 use super::*;
 
 impl<'a> Gen<'a> {
-    pub fn get_type_tokens(&self, mut type_index: TypeIndex) -> Result<TokenStream> {
-        // Remove qualifiers.
-        let mut const_qual = false;
-        while type_index.tag() == TypeSort::QUALIFIED {
-            let qt = self.ifc.type_qualified().entry(type_index.index())?;
-            if qt.qualifiers.contains(Qualifiers::CONST) {
-                const_qual = true;
-            }
-            type_index = qt.unqualified_type;
-        }
+    pub fn get_type_tokens(&self, type_index: TypeIndex) -> Result<TokenStream> {
+        self.get_type_tokens_with_const(type_index).map(|(tokens, _)| tokens)
+    }
 
+    fn get_type_tokens_with_const(&self, type_index: TypeIndex) -> Result<(TokenStream, bool)> {
         let mut anon_name_counter: u32 = 0;
 
         Ok(match type_index.tag() {
+            TypeSort::QUALIFIED => {
+                let qt = self.ifc.type_qualified().entry(type_index.index())?;
+                let is_const = qt.qualifiers.contains(Qualifiers::CONST);
+                (self.get_type_tokens(qt.unqualified_type)?, is_const)
+            }
+
             TypeSort::FUNDAMENTAL => {
                 let fun_ty = self.ifc.type_fundamental().entry(type_index.index())?;
                 let is_signed = matches!(fun_ty.sign, TypeSign::SIGNED | TypeSign::PLAIN);
 
-                match fun_ty.basis {
+                let fun_tokens = match fun_ty.basis {
                     TypeBasis::INT => match (fun_ty.precision, is_signed) {
                         (
                             TypePrecision::DEFAULT | TypePrecision::LONG | TypePrecision::BIT32,
@@ -76,31 +76,35 @@ impl<'a> Gen<'a> {
                     TypeBasis::ELLIPSIS => quote!(core::ffi::c_void),
 
                     _ => todo!("TypeBasis: {:?}", fun_ty.basis),
-                }
+                };
+                (fun_tokens, false)
             }
 
             TypeSort::POINTER => {
                 let pointed_ty = *self.ifc.type_pointer().entry(type_index.index())?;
-                let pointed_ty_tokens = self.get_type_tokens(pointed_ty)?;
-                if const_qual {
+                let (pointed_ty_tokens, is_const) = self.get_type_tokens_with_const(pointed_ty)?;
+                (if is_const {
                     quote! {*const #pointed_ty_tokens}
                 } else {
                     quote! {*mut #pointed_ty_tokens}
-                }
+                }, false)
             }
 
             TypeSort::ARRAY => {
                 let type_array = self.ifc.type_array().entry(type_index.index())?;
-                let element_tokens = self.get_type_tokens(type_array.element)?;
-                let extent_tokens = if type_array.extent.tag() == ExprSort::EMPTY {
-                    quote!(_)
+                let (element_tokens, is_const) = self.get_type_tokens_with_const(type_array.element)?;
+                if type_array.extent.tag() == ExprSort::VENDOR_EXTENSION {
+                    // Unsized array - translate as a pointer.
+                    (if is_const {
+                        quote! {*const #element_tokens}
+                    } else {
+                        quote! {*mut #element_tokens}
+                    }, false)
                 } else {
-                    quote!(42)
-                    // gen_expr_tokens(ifc, type_array.extent)?
-                };
-
-                quote! {
-                    [#element_tokens; #extent_tokens]
+                    let extent_tokens = self.gen_expr_tokens(None, type_array.extent)?;
+                    (quote! {
+                        [#element_tokens; #extent_tokens]
+                    }, is_const)
                 }
             }
 
@@ -109,7 +113,7 @@ impl<'a> Gen<'a> {
 
                 if let Some(id) = self.renamed_decls.get(&desig_decl) {
                     debug!("found renamed decl: {:?} -> {}", desig_decl, id);
-                    return Ok(id.to_token_stream());
+                    return Ok((id.to_token_stream(), false));
                 }
 
                 let desig_name: &str = match desig_decl.tag() {
@@ -146,41 +150,41 @@ impl<'a> Gen<'a> {
                     trace!("resolved type to external crate: {}", extern_crate);
                     let extern_ident = syn::Ident::new(extern_crate, Span::call_site());
                     let desig_ident = syn::Ident::new(&desig_name, Span::call_site());
-                    quote! { #extern_ident :: #desig_ident}
+                    (quote! { #extern_ident :: #desig_ident}, false)
                 } else {
                     // This designated type references something in this crate.
-                    Ident::new(&desig_name, Span::call_site()).to_token_stream()
+                    (Ident::new(&desig_name, Span::call_site()).to_token_stream(), false)
                 }
             }
 
             TypeSort::UNALIGNED => {
                 // TODO: property handle unaligned
                 let unaligned = self.ifc.type_unaligned().entry(type_index.index())?;
-                self.get_type_tokens(*unaligned)?
+                self.get_type_tokens_with_const(*unaligned)?
             }
 
             TypeSort::LVALUE_REFERENCE => {
                 let lvalue_ref = *self.ifc.type_lvalue_reference().entry(type_index.index())?;
-                let tokens = self.get_type_tokens(lvalue_ref)?;
-                if const_qual {
+                let (tokens, is_const) = self.get_type_tokens_with_const(lvalue_ref)?;
+                (if is_const {
                     quote! {*const #tokens}
                 } else {
                     quote! {*mut #tokens}
-                }
+                }, false)
             }
 
             TypeSort::RVALUE_REFERENCE => {
                 let rvalue_ref = *self.ifc.type_rvalue_reference().entry(type_index.index())?;
-                let tokens = self.get_type_tokens(rvalue_ref)?;
-                if const_qual {
+                let (tokens, is_const)= self.get_type_tokens_with_const(rvalue_ref)?;
+                (if is_const {
                     quote! {*const *const #tokens}
                 } else {
                     quote! {*mut *mut #tokens}
-                }
+                }, false)
             }
 
             TypeSort::FUNCTION => {
-                quote!(*const core::ffi::c_void)
+                (quote!(*const core::ffi::c_void), false)
             }
 
             _ => todo!("unrecognized type sort: {:?}", type_index),

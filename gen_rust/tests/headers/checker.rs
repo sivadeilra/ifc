@@ -27,9 +27,8 @@ fn main() {
         // enum class
         scoop_flavor(IcecreamFlavor::Chocolate);
 
-        // There seem to be bugs in the way that arrays and `const T&` are represented in the IFC.
-        // all_the_flavor(&mut UseAsPointer{}, &mut UseAsReference{}, &mut (&mut UseAsReference2{} as *mut _), [UseAsArray{}], &UseAsQualifiedRef{});
-        all_the_flavor(&mut UseAsPointer{}, &mut UseAsReference{}, &mut (&mut UseAsReference2{} as *mut _), [UseAsArray{}].as_ptr(), &mut UseAsQualifiedRef{});
+        // Different ways to wrap types: pointer, reference, &&, array, const ref.
+        all_the_flavor(&mut UseAsPointer{}, &mut UseAsReference{}, &mut (&mut UseAsReference2{} as *mut _), &[UseAsArray{}], &UseAsQualifiedRef{});
     }
 
     // Namespace support is currently broken.

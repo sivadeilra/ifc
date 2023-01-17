@@ -57,7 +57,7 @@ impl<'a> Gen<'a> {
             let var_name_string = self.ifc.get_string(var.name)?;
             let var_name_ident = Ident::new(var_name_string, Span::call_site());
 
-            let initializer = self.gen_expr_tokens(enum_decl.base, var.initializer)?;
+            let initializer = self.gen_expr_tokens(Some(enum_decl.base), var.initializer)?;
             variants_tokens.extend(quote! {
                 pub const #var_name_ident: #en_ident = #en_ident(#initializer);
             });
