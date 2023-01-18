@@ -14,7 +14,7 @@ impl<'a> Gen<'a> {
         if nested_scope.initializer == 0 {
             // This struct has a forward declaration but no definition,
             // e.g. "struct FOO;".  Not sure what to do about that, yet.
-            debug!("struct {} - forward decl", nested_scope_ident);
+            trace!("struct {} is a forward decl", nested_scope_ident);
 
             let use_extern_types = false;
             if use_extern_types {
@@ -32,7 +32,7 @@ impl<'a> Gen<'a> {
         }
 
         // Emit the definition for this struct.
-        debug!("struct {} - emitting", name);
+        trace!("struct {} is a definition", name);
         let mut struct_contents = TokenStream::new();
 
         if nested_scope.base.0 != 0 {
@@ -124,7 +124,6 @@ impl<'a> Gen<'a> {
 
         let doc = format!("Scope: {:?}", member_decl_index);
 
-        debug!("emitting struct {}", nested_scope_ident);
         Ok(quote! {
                 #[doc = #doc]
                 #[repr(C)]

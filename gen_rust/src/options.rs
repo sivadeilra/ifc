@@ -102,7 +102,8 @@ pub struct Filter<'a> {
 impl<'a> Filter<'a> {
     pub fn is_allowed(&self, name: &str) -> bool {
         if !self.allowlist.is_empty() {
-            if let Some(matching_filter) = self.allowlist.iter().find(|regex| regex.is_match(name)) {
+            if let Some(matching_filter) = self.allowlist.iter().find(|regex| regex.is_match(name))
+            {
                 debug!("Item {} allowed by {:?}", name, matching_filter);
             } else {
                 return false;

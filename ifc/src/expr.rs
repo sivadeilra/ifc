@@ -86,6 +86,16 @@ pub struct ConstF64 {
     pub unspecified: [u8; 4],
 }
 
+/// Partition `expr.decl`
+#[repr(C)]
+#[derive(Clone, AsBytes, FromBytes, Debug)]
+pub struct ExprNamedDecl {
+    pub locus: SourceLocation,
+    pub ty: TypeIndex,
+    pub resolution: DeclIndex,
+}
+
+
 /// Partition `expr.dyad`
 #[repr(C)]
 #[derive(Clone, AsBytes, FromBytes, Debug)]

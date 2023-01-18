@@ -33,6 +33,8 @@ fn headers_test() {
             blocklist_macro: &["^FOO_DECREMENT$"],
             allowlist_type: &["^::Classy$", "^::Foo.*$"],
             allowlist_function: &["^::[a-z_]+*_flavor$"],
+            allowlist_variable: &["^::N1::.*$"],
+            blocklist_variable: &["^.*::ignored$"],
             ..Default::default()
         }),
     );

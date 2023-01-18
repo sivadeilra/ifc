@@ -2,13 +2,17 @@ use super::*;
 
 impl<'a> Gen<'a> {
     // This converts literal expressions into token streams.
-    pub fn gen_expr_tokens(&self, ty: Option<ifc::TypeIndex>, expr: ifc::ExprIndex) -> Result<TokenStream> {
+    pub fn gen_expr_tokens(
+        &self,
+        ty: Option<ifc::TypeIndex>,
+        expr: ifc::ExprIndex,
+    ) -> Result<TokenStream> {
         let ty = ty.map(|ty| self.ifc.remove_qualifiers(ty)).transpose()?;
 
         Ok(match expr.tag() {
             ExprSort::LITERAL => {
                 let literal = self.ifc.expr_literal().entry(expr.index())?;
-                debug!("literal = {:?}", literal);
+                trace!("{:?}> literal {:?}", expr, literal);
 
                 fn get_fundamental_type(
                     ifc: &Ifc,
@@ -48,7 +52,10 @@ impl<'a> Gen<'a> {
                         let value: u32 = literal.value.index();
                         trace!("LiteralSort::IMMEDIATE: value = 0x{:x} {}", value, value);
                         match fun_ty {
-                            Some(FundamentalType { basis: TypeBasis::BOOL, .. }) => {
+                            Some(FundamentalType {
+                                basis: TypeBasis::BOOL,
+                                ..
+                            }) => {
                                 if value != 0 {
                                     quote!(true)
                                 } else {
@@ -66,7 +73,10 @@ impl<'a> Gen<'a> {
                         let value: u64 = *self.ifc.const_i64().entry(literal.value.index())?;
                         trace!("LiteralSort::INTEGER: value = 0x{:x} {}", value, value);
                         match fun_ty {
-                            Some(FundamentalType { basis: TypeBasis::BOOL, .. }) => {
+                            Some(FundamentalType {
+                                basis: TypeBasis::BOOL,
+                                ..
+                            }) => {
                                 if value != 0 {
                                     quote!(true)
                                 } else {
@@ -74,7 +84,10 @@ impl<'a> Gen<'a> {
                                 }
                             }
 
-                            Some(FundamentalType { sign: TypeSign::SIGNED | TypeSign::PLAIN, .. }) => {
+                            Some(FundamentalType {
+                                sign: TypeSign::SIGNED | TypeSign::PLAIN,
+                                ..
+                            }) => {
                                 let value_i64: i64 = value as i64;
                                 if value_i64 < 0 {
                                     if let Some(value_pos) = value_i64.checked_abs() {
@@ -111,6 +124,25 @@ impl<'a> Gen<'a> {
             ExprSort::DYAD => {
                 let dyad = self.ifc.expr_dyad().entry(expr.index())?;
                 bail!("ExprSort::DYAD: {:?}", dyad);
+            }
+
+            ExprSort::NAMED_DECL => {
+                let named = self.ifc.expr_named_decl().entry(expr.index())?;
+                trace!("{:?}> named declaration {:?}", expr, named);
+                match named.resolution.tag() {
+                    DeclSort::ENUMERATOR => {
+                        let enumerator_decl =
+                            self.ifc.decl_enumerator().entry(named.resolution.index())?;
+                        let ident = Ident::new(
+                            self.ifc.get_string(enumerator_decl.name)?,
+                            Span::call_site(),
+                        );
+                        let container = self.get_type_tokens(named.ty)?;
+                        quote!(#container :: #ident)
+                    }
+
+                    _ => todo!("unsupported named decl: {:?}", named.resolution),
+                }
             }
 
             _ => todo!("unsupported expr: {:?}", expr),

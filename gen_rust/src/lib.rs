@@ -46,12 +46,12 @@ type RefIndex = usize;
 
 struct Gen<'a> {
     ifc: &'a Ifc,
-    symbol_map: SymbolMap,
     options: &'a Options,
     #[allow(dead_code)]
     wk: WellKnown,
 
-    renamed_decls: HashMap<DeclIndex, Ident>,
+    scope_to_contents: HashMap<DeclIndex, HashMap<DeclIndex, Cow<'a, str>>>,
+    fully_qualified_names: HashMap<DeclIndex, TokenStream>,
 }
 
 #[derive(Default)]
@@ -95,7 +95,7 @@ pub struct ReferencedIfc {
 
 #[derive(Default, Clone)]
 pub struct SymbolMap {
-    pub crates: Vec<String>,
+    pub crates: Vec<Ident>,
     /// Maps symbol names that are in the global namespace scope to the IFC which defines them.
     /// For example, `"_GUID"` to some index.
     pub global_symbols: HashMap<String, RefIndex>,
@@ -122,86 +122,38 @@ impl SymbolMap {
     pub fn add_ref_ifc(&mut self, ifc_name: &str, ifc: &Ifc) -> Result<RefIndex> {
         let ifc_index = self.crates.len();
 
-        self.crates.push(ifc_name.to_string());
+        self.crates.push(Ident::new(ifc_name, Span::call_site()));
 
         let mut num_added: u64 = 0;
 
-        let mut add_symbol = |name: &str, map: &mut HashMap<String, RefIndex>| {
-            if let Some(existing_index) = map.get_mut(name) {
+        let mut add_symbol = |name: String, map: &mut HashMap<String, RefIndex>| {
+            if let Some(existing_index) = map.get_mut(&name) {
                 if ifc_index < *existing_index {
                     *existing_index = ifc_index;
                 }
             } else {
                 // This is the first time we've seen this symbol. Insert using the current IFC index.
-                map.insert(name.to_string(), ifc_index);
+                map.insert(name, ifc_index);
             }
             num_added += 1;
         };
 
         if let Some(scope) = ifc.global_scope() {
-            for member_decl in ifc.iter_scope(scope)? {
-                match member_decl.tag() {
-                    DeclSort::SCOPE => {
-                        let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
-                        if ifc.is_type_namespace(nested_scope.ty)? {
-                            // For now, we ignore namespaces.
-                        } else {
-                            // It's a nested struct/class.
-                            if nested_scope.name.tag() == NameSort::IDENTIFIER {
-                                let nested_name = ifc.get_string(nested_scope.name.index())?;
-                                add_symbol(nested_name, &mut self.global_symbols);
-                            } else {
-                                warn!("ignoring scope member named: {:?}", nested_scope.name);
-                            }
-                        }
-                    }
-
-                    DeclSort::ALIAS => {
-                        let alias = ifc.decl_alias().entry(member_decl.index())?;
-                        let alias_name = ifc.get_string(alias.name)?;
-                        add_symbol(alias_name, &mut self.global_symbols);
-                    }
-
-                    DeclSort::ENUMERATION => {
-                        let en = ifc.decl_enum().entry(member_decl.index())?;
-                        let en_name = ifc.get_string(en.name)?;
-                        add_symbol(en_name, &mut self.global_symbols);
-                    }
-
-                    DeclSort::INTRINSIC => {}
-                    DeclSort::TEMPLATE => {}
-                    DeclSort::EXPLICIT_INSTANTIATION => {}
-                    DeclSort::EXPLICIT_SPECIALIZATION => {}
-
-                    DeclSort::FUNCTION => {
-                        let func_decl = ifc.decl_function().entry(member_decl.index())?;
-                        match func_decl.name.tag() {
-                            NameSort::IDENTIFIER => {
-                                let func_name = ifc.get_string(func_decl.name.index())?;
-                                add_symbol(func_name, &mut self.global_symbols);
-                            }
-                            _ => {
-                                warn!("ignoring function named: {:?}", func_decl.name);
-                            }
-                        }
-                    }
-
-                    _ => {
-                        warn!("ignoring unrecognized scope member: {:?}", member_decl);
-                    }
-                }
-            }
+            self.add_scope(ifc, &mut add_symbol, scope, "")?;
         }
 
         // Add object-like macros that pass the filter.
         for object in ifc.macro_object_like().entries.iter() {
-            add_symbol(ifc.get_string(object.name)?, &mut self.object_like_macros);
+            add_symbol(
+                ifc.get_string(object.name)?.to_string(),
+                &mut self.object_like_macros,
+            );
         }
 
         // Add function-like macros that pass the filter.
         for func_like in ifc.macro_function_like().entries.iter() {
             add_symbol(
-                ifc.get_string(func_like.name)?,
+                ifc.get_string(func_like.name)?.to_string(),
                 &mut self.function_like_macros,
             );
         }
@@ -213,8 +165,105 @@ impl SymbolMap {
         Ok(ifc_index)
     }
 
-    pub fn is_symbol_in(&self, name: &str) -> bool {
-        self.global_symbols.contains_key(name)
+    fn add_scope(
+        &mut self,
+        ifc: &Ifc,
+        add_symbol: &mut impl FnMut(String, &mut HashMap<String, RefIndex>),
+        container: ScopeIndex,
+        container_fully_qualified_name: &str,
+    ) -> Result<()> {
+        for member_decl in ifc.iter_scope(container)? {
+            match member_decl.tag() {
+                DeclSort::SCOPE => {
+                    let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
+                    if nested_scope.name.tag() == NameSort::IDENTIFIER {
+                        let nested_name = format!(
+                            "{}::{}",
+                            container_fully_qualified_name,
+                            ifc.get_string(nested_scope.name.index())?
+                        );
+                        if ifc.is_type_namespace(nested_scope.ty)? {
+                            self.add_scope(
+                                ifc,
+                                add_symbol,
+                                nested_scope.initializer,
+                                &nested_name,
+                            )?;
+                        } else {
+                            // It's a nested struct/class.
+                            add_symbol(nested_name, &mut self.global_symbols);
+                        }
+                    } else {
+                        warn!("ignoring scope member named: {:?}", nested_scope.name);
+                    }
+                }
+
+                DeclSort::ALIAS => {
+                    let alias = ifc.decl_alias().entry(member_decl.index())?;
+                    let alias_name = format!(
+                        "{}::{}",
+                        container_fully_qualified_name,
+                        ifc.get_string(alias.name)?
+                    );
+                    add_symbol(alias_name, &mut self.global_symbols);
+                }
+
+                DeclSort::ENUMERATION => {
+                    let en = ifc.decl_enum().entry(member_decl.index())?;
+                    let en_name = format!(
+                        "{}::{}",
+                        container_fully_qualified_name,
+                        ifc.get_string(en.name)?
+                    );
+                    add_symbol(en_name, &mut self.global_symbols);
+                }
+
+                DeclSort::INTRINSIC => {}
+                DeclSort::TEMPLATE => {}
+                DeclSort::EXPLICIT_INSTANTIATION => {}
+                DeclSort::EXPLICIT_SPECIALIZATION => {}
+
+                DeclSort::FUNCTION => {
+                    let func_decl = ifc.decl_function().entry(member_decl.index())?;
+                    match func_decl.name.tag() {
+                        NameSort::IDENTIFIER => {
+                            let func_name = format!(
+                                "{}::{}",
+                                container_fully_qualified_name,
+                                ifc.get_string(func_decl.name.index())?
+                            );
+                            add_symbol(func_name, &mut self.global_symbols);
+                        }
+                        _ => {
+                            warn!("ignoring function named: {:?}", func_decl.name);
+                        }
+                    }
+                }
+
+                DeclSort::VARIABLE => {
+                    let var_decl = ifc.decl_var().entry(member_decl.index())?;
+                    match var_decl.name.tag() {
+                        NameSort::IDENTIFIER => {
+                            let var_name = format!(
+                                "{}::{}",
+                                container_fully_qualified_name,
+                                ifc.get_string(var_decl.name.index())?
+                            );
+                            add_symbol(var_name, &mut self.global_symbols);
+                        }
+                        _ => {
+                            warn!("ignoring var named: {:?}", var_decl.name);
+                        }
+                    }
+                }
+
+                _ => {
+                    warn!("ignoring unrecognized scope member: {:?}", member_decl);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn is_object_like_macro_in(&self, name: &str) -> bool {
@@ -225,53 +274,64 @@ impl SymbolMap {
         self.function_like_macros.contains_key(name)
     }
 
-    pub fn resolve(&self, name: &str) -> Option<&str> {
+    pub fn resolve(&self, name: &str) -> Option<&Ident> {
         let crate_index = *self.global_symbols.get(name)?;
-        Some(self.crates[crate_index].as_str())
+        Some(&self.crates[crate_index])
     }
 
-    pub fn resolve_object_like_macro(&self, name: &str) -> Option<&str> {
+    pub fn resolve_object_like_macro(&self, name: &str) -> Option<&Ident> {
         let crate_index = *self.object_like_macros.get(name)?;
-        Some(self.crates[crate_index].as_str())
+        Some(&self.crates[crate_index])
     }
 
-    pub fn resolve_function_like_macro(&self, name: &str) -> Option<&str> {
+    pub fn resolve_function_like_macro(&self, name: &str) -> Option<&Ident> {
         let crate_index = *self.function_like_macros.get(name)?;
-        Some(self.crates[crate_index].as_str())
+        Some(&self.crates[crate_index])
     }
 }
 
 impl<'a> Gen<'a> {
-    fn new(ifc: &'a Ifc, symbol_map: SymbolMap, options: &'a Options) -> Self {
+    fn new(
+        ifc: &'a Ifc,
+        options: &'a Options,
+        scope_to_contents: HashMap<DeclIndex, HashMap<DeclIndex, Cow<'a, str>>>,
+        fully_qualified_names: HashMap<DeclIndex, TokenStream>,
+    ) -> Self {
         Self {
             ifc,
-            symbol_map,
             options,
             wk: WellKnown {
                 tokens_empty: quote!(),
                 tokens_false: quote!(false),
                 tokens_true: quote!(true),
             },
-            renamed_decls: Default::default(),
+            scope_to_contents,
+            fully_qualified_names,
         }
     }
 }
 
 pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<TokenStream> {
-    let mut gen = Gen::new(ifc, symbol_map, options);
+    let renamed_decls = ifc
+        .global_scope()
+        .map(|global_scope| Gen::rename_decls(ifc, global_scope))
+        .transpose()?
+        .unwrap_or_default();
 
-    if let Some(global_scope) = ifc.global_scope() {
-        let renamed_decls = gen.rename_decls(global_scope)?;
-        gen.renamed_decls = renamed_decls;
-    }
-
-    let filtered_scope_to_contents = TypeDiscovery::walk_global_scope(
+    let type_and_crate_info = TypeDiscovery::walk_global_scope(
         ifc,
-        &gen.symbol_map,
-        &gen.renamed_decls,
+        &symbol_map,
+        renamed_decls,
         options.type_filter(),
         options.function_filter(),
         options.variable_filter(),
+    );
+
+    let gen = Gen::new(
+        ifc,
+        options,
+        type_and_crate_info.scope_to_contents,
+        type_and_crate_info.fully_qualified_names,
     );
 
     let mut outputs = GenOutputs::default();
@@ -279,11 +339,13 @@ pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<T
     if options.standalone {
         outputs.top.extend(gen.gen_standalone_crate_header()?);
     }
-    outputs.top.extend(gen.gen_common_module_header()?);
-    gen.gen_macros(options.macro_filter(), &mut outputs.macros)?;
+    outputs
+        .top
+        .extend(gen.gen_common_module_header(&symbol_map.crates)?);
+    gen.gen_macros(&symbol_map, options.macro_filter(), &mut outputs.macros)?;
 
-    gen.gen_types(&filtered_scope_to_contents, &mut outputs.scopes)?;
-    gen.find_orphans(&filtered_scope_to_contents, &mut outputs.scopes)?;
+    gen.gen_types(&mut outputs.scopes)?;
+    gen.find_orphans(&mut outputs.scopes)?;
     Ok(outputs.finish())
 }
 
@@ -301,8 +363,8 @@ impl<'a> Gen<'a> {
         })
     }
 
-    fn gen_common_module_header(&self) -> Result<TokenStream> {
-        let extern_crates = self.gen_extern_crate()?;
+    fn gen_common_module_header(&self, extern_crates: &Vec<Ident>) -> Result<TokenStream> {
+        let extern_crates = self.gen_extern_crate(extern_crates)?;
 
         Ok(quote! {
             #extern_crates
@@ -316,20 +378,14 @@ impl<'a> Gen<'a> {
     }
 
     #[inline(never)]
-    fn gen_types(
-        &self,
-        filtered_scope_to_contents: &HashMap<DeclIndex, HashMap<DeclIndex, Cow<'_, str>>>,
-        outputs: &mut Vec<TokenStream>,
-    ) -> Result<()> {
+    fn gen_types(&self, outputs: &mut Vec<TokenStream>) -> Result<()> {
         if let Some(global_scope) = self.ifc.global_scope() {
             self.gen_members_for_scope(
-                filtered_scope_to_contents,
-                filtered_scope_to_contents
+                self.scope_to_contents
                     .get(&DeclIndex(0))
                     .expect("Must have an entry for the global scope"),
                 outputs,
                 global_scope,
-                50,
             )
         } else {
             Ok(())
@@ -340,17 +396,17 @@ impl<'a> Gen<'a> {
     /// Also, for nested types, we need "hoist" these to global scope.
     /// We do so by building a renaming table, which maps DeclIndex to String.
     #[inline(never)]
-    fn rename_decls(&self, parent_scope: ScopeIndex) -> Result<HashMap<DeclIndex, Ident>> {
+    fn rename_decls(ifc: &Ifc, parent_scope: ScopeIndex) -> Result<HashMap<DeclIndex, Ident>> {
         let mut decl_names: HashMap<DeclIndex, Ident> = HashMap::new();
         debug!("rename_decls: start");
-        self.rename_decls_rec(parent_scope, None, &mut decl_names)?;
+        Gen::rename_decls_rec(ifc, parent_scope, None, &mut decl_names)?;
         debug!("rename_decls: end, num renamed = {}", decl_names.len());
         Ok(decl_names)
     }
 
     #[inline(never)]
     fn rename_decls_rec(
-        &self,
+        ifc: &Ifc,
         parent_scope: ScopeIndex,
         name_basis_opt: Option<&str>,
         decl_names: &mut HashMap<DeclIndex, Ident>,
@@ -361,18 +417,18 @@ impl<'a> Gen<'a> {
         let mut anon_name_counter: u32 = 0;
         // let mut overloaded_func_name_counter: u32 = 0;
 
-        for member_decl in self.ifc.iter_scope(parent_scope)? {
+        for member_decl in ifc.iter_scope(parent_scope)? {
             new_name.clear();
             fixed_name.clear();
 
             match member_decl.tag() {
                 DeclSort::SCOPE => {
-                    let nested_scope = self.ifc.decl_scope().entry(member_decl.index())?;
-                    if self.ifc.is_type_namespace(nested_scope.ty)? {
+                    let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
+                    if ifc.is_type_namespace(nested_scope.ty)? {
                         // ignore namespaces for now
                     } else {
                         // It's a nested type.  Is the name compiler-generated?
-                        let scope_name = self.ifc.get_name_string(nested_scope.name)?;
+                        let scope_name = ifc.get_name_string(nested_scope.name)?;
                         let is_gen = is_name_compiler_generated(scope_name);
                         let this_name: &str = if is_gen {
                             fixed_name.clear();
@@ -410,7 +466,8 @@ impl<'a> Gen<'a> {
 
                         // Recursively evaluate nested scope.
                         if nested_scope.initializer != 0 {
-                            self.rename_decls_rec(
+                            Gen::rename_decls_rec(
+                                ifc,
                                 nested_scope.initializer,
                                 Some(&new_name),
                                 decl_names,
@@ -449,13 +506,12 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn gen_extern_crate(&self) -> Result<TokenStream> {
+    fn gen_extern_crate(&self, extern_crates: &Vec<Ident>) -> Result<TokenStream> {
         // Add "extern crate foo;" declarations.
         let mut output = TokenStream::new();
-        for name in self.symbol_map.crates.iter() {
-            let crate_ident = Ident::new(name, Span::call_site());
+        for ident in extern_crates {
             output.extend(quote! {
-                extern crate #crate_ident;
+                extern crate #ident;
             });
         }
         Ok(output)
@@ -465,26 +521,10 @@ impl<'a> Gen<'a> {
     #[inline(never)]
     fn gen_members_for_scope(
         &self,
-        filtered_scope_to_contents: &HashMap<DeclIndex, HashMap<DeclIndex, Cow<'_, str>>>,
         filtered_contents: &HashMap<DeclIndex, Cow<'_, str>>,
         outputs: &mut Vec<TokenStream>,
         parent_scope: ScopeIndex,
-        max_depth: u32,
     ) -> Result<()> {
-        debug!(
-            "Scope #{}{}",
-            parent_scope,
-            if parent_scope + 1 == self.ifc.file_header().global_scope {
-                " - Global scope"
-            } else {
-                ""
-            }
-        );
-
-        if max_depth == 0 {
-            bail!("Max depth exceeded!");
-        }
-
         let mut names_map = HashMap::new();
 
         for (name, member_decl_index) in self
@@ -492,12 +532,18 @@ impl<'a> Gen<'a> {
             .iter_scope(parent_scope)?
             .filter_map(|item| filtered_contents.get(&item).zip(Some(item)))
         {
+            debug!(
+                "{:?}> emitting {} ({})",
+                member_decl_index,
+                name,
+                self.fully_qualified_names.get(&member_decl_index).unwrap()
+            );
+
             log_error! { {
                 match member_decl_index.tag() {
                     DeclSort::ALIAS => {
                         let decl_alias = self.ifc.decl_alias().entry(member_decl_index.index())?;
 
-                        debug!("alias {} - adding", &name);
                         let alias_ident = syn::Ident::new(&name, Span::call_site());
                         let aliasee_tokens = self.get_type_tokens(decl_alias.aliasee)?;
 
@@ -514,32 +560,25 @@ impl<'a> Gen<'a> {
                         let nested_scope = self.ifc.decl_scope().entry(member_decl_index.index())?;
 
                         // What kind of scope is it?
-                        info!("scope {} - {}", name, self.ifc.is_type_namespace(nested_scope.ty)?);
                         if self.ifc.is_type_namespace(nested_scope.ty)? {
-                            if let Some(filtered_contents) = filtered_scope_to_contents.get(&member_decl_index) {
+                            if let Some(filtered_contents) = self.scope_to_contents.get(&member_decl_index) {
                                 let mut members = Vec::new();
                                 let ident = Ident::new(name, Span::call_site());
                                 self.gen_members_for_scope(
-                                    filtered_scope_to_contents,
                                     filtered_contents,
                                     &mut members,
                                     nested_scope.initializer,
-                                    max_depth - 1,
                                 )?;
                                 if !members.is_empty() {
                                     outputs.push(
                                         quote!{
-                                            mod #ident {
+                                            pub mod #ident {
                                                 #(#members
                                                 )*
                                             }
                                         }
                                     );
-                                } else {
-                                    bail!("Empty namepsace");
                                 }
-                            } else {
-                                bail!("filter not found");
                             }
                         } else {
                             // It's a nested struct/class.
@@ -691,11 +730,7 @@ pub struct SymbolRemaps {
 
 impl<'a> Gen<'a> {
     /// Walk all the scopes, see if there are declarations that are not part of any scope.
-    fn find_orphans(
-        &self,
-        filtered_scope_to_contents: &HashMap<DeclIndex, HashMap<DeclIndex, Cow<'_, str>>>,
-        outputs: &mut Vec<TokenStream>,
-    ) -> Result<()> {
+    fn find_orphans(&self, outputs: &mut Vec<TokenStream>) -> Result<()> {
         let ifc = self.ifc;
 
         struct State {
@@ -753,7 +788,7 @@ impl<'a> Gen<'a> {
             log_error! { {
                 if !*value {
                     let nested_scope = ifc.decl_scope().entry(i as u32)?;
-                    if let Some(filtered_output) = filtered_scope_to_contents.get(&nested_scope.home_scope)
+                    if let Some(filtered_output) = self.scope_to_contents.get(&nested_scope.home_scope)
                         && let Some(name) = filtered_output.get(&DeclIndex(i as u32)) {
                         debug!(
                             "scope #{} not found:  {}   forward decl? {}",

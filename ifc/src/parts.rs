@@ -169,6 +169,7 @@ part_info! {
     command_line, "command_line", TextOffset;
 
     expr_literal, "expr.literal", ExprLiteral;
+    expr_named_decl, "expr.decl", ExprNamedDecl;
     expr_dyad, "expr.dyad", ExprDyad;
 
     const_i64, "const.i64", u64;

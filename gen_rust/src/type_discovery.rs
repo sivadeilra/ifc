@@ -2,14 +2,77 @@ use super::*;
 use crate::{fixup_anon_names, options::Filter, SymbolMap};
 use anyhow::Result;
 use log::info;
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
-};
+use once_cell::unsync::OnceCell;
+use std::{borrow::Cow, collections::HashMap};
 
-struct SkippedType<'ifc> {
-    name: Cow<'ifc, str>,
-    fully_qualified_name: String,
+pub(crate) struct TypeAndCrateInformation<'ifc> {
+    /// Scopes in the current crate and their contents that are to be emitted.
+    pub scope_to_contents: HashMap<DeclIndex, HashMap<DeclIndex, Cow<'ifc, str>>>,
+
+    /// The fully qualified name (including crate) to use for a given declaration.
+    pub fully_qualified_names: HashMap<DeclIndex, TokenStream>,
+}
+
+struct FullyQualifiedName<'a> {
+    name: Cow<'a, str>,
+    container_as_string: String,
+    cached_as_string: OnceCell<String>,
+    container_as_tokens: TokenStream,
+    cached_as_tokens: OnceCell<TokenStream>,
+}
+
+impl<'a> FullyQualifiedName<'a> {
+    fn global_namespace() -> Self {
+        Self {
+            name: "".into(),
+            container_as_string: "".to_string(),
+            cached_as_string: OnceCell::with_value("".to_string()),
+            container_as_tokens: TokenStream::new(),
+            cached_as_tokens: OnceCell::with_value(TokenStream::new()),
+        }
+    }
+
+    fn make_child<'child>(
+        &self,
+        child_name: impl Into<Cow<'child, str>>,
+    ) -> FullyQualifiedName<'child> {
+        FullyQualifiedName {
+            name: child_name.into(),
+            container_as_string: self.as_string().to_string(),
+            cached_as_string: OnceCell::new(),
+            container_as_tokens: self.as_tokens().clone(),
+            cached_as_tokens: OnceCell::new(),
+        }
+    }
+
+    fn name_as_ident(&self) -> Ident {
+        Ident::new(&self.name, Span::call_site())
+    }
+
+    fn as_string(&self) -> &str {
+        self.cached_as_string
+            .get_or_init(|| format!("{}::{}", self.container_as_string, self.name))
+    }
+
+    fn as_tokens(&self) -> &TokenStream {
+        self.cached_as_tokens.get_or_init(|| {
+            let ident = self.name_as_ident();
+            let container = &self.container_as_tokens;
+            quote!(#container :: #ident)
+        })
+    }
+
+    fn as_tokens_in_current_crate(&self) -> TokenStream {
+        let ident = self.name_as_ident();
+        let container = &self.container_as_tokens;
+        quote!(crate #container :: #ident)
+    }
+
+    fn as_tokens_in_extern_crate(&self, extern_crate: &Ident) -> TokenStream {
+        let ident = self.name_as_ident();
+        let container = &self.container_as_tokens;
+        quote!(#extern_crate #container :: #ident)
+    }
 }
 
 /// Discovers types within a scope and maintains a list of included and skipped
@@ -17,21 +80,21 @@ struct SkippedType<'ifc> {
 pub(crate) struct TypeDiscovery<'ifc, 'opt> {
     ifc: &'ifc Ifc,
     symbol_map: &'ifc SymbolMap,
-    renamed_decls: &'ifc HashMap<DeclIndex, Ident>,
+    renamed_decls: HashMap<DeclIndex, Ident>,
 
     type_filter: Filter<'opt>,
     function_filter: Filter<'opt>,
     variable_filter: Filter<'opt>,
-
-    /// Discovered types (from any crate) that are to be included.
-    included_declarations: HashSet<DeclIndex>,
 
     /// Scopes in the current crate and their contents that are to be emitted.
     scope_to_contents: HashMap<DeclIndex, HashMap<DeclIndex, Cow<'ifc, str>>>,
 
     /// Discovered types that were skipped while their containing scope was
     /// being walked.
-    skipped_types: HashMap<DeclIndex, SkippedType<'ifc>>,
+    skipped_types: HashMap<DeclIndex, FullyQualifiedName<'ifc>>,
+
+    /// The fully qualified name (including crate) to use for a given declaration.
+    fully_qualified_names: HashMap<DeclIndex, Option<TokenStream>>,
 }
 
 impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
@@ -39,7 +102,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
     fn new(
         ifc: &'ifc Ifc,
         symbol_map: &'ifc SymbolMap,
-        renamed_decls: &'ifc HashMap<DeclIndex, Ident>,
+        renamed_decls: HashMap<DeclIndex, Ident>,
         type_filter: Filter<'opt>,
         function_filter: Filter<'opt>,
         variable_filter: Filter<'opt>,
@@ -51,9 +114,9 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
             type_filter,
             function_filter,
             variable_filter,
-            included_declarations: HashSet::new(),
             scope_to_contents: HashMap::new(),
             skipped_types: HashMap::new(),
+            fully_qualified_names: HashMap::new(),
         }
     }
 
@@ -61,12 +124,15 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
     pub fn walk_global_scope(
         ifc: &'ifc Ifc,
         symbol_map: &'ifc SymbolMap,
-        renamed_decls: &'ifc HashMap<DeclIndex, Ident>,
+        renamed_decls: HashMap<DeclIndex, Ident>,
         type_filter: Filter<'opt>,
         function_filter: Filter<'opt>,
         variable_filter: Filter<'opt>,
-    ) -> HashMap<DeclIndex, HashMap<DeclIndex, Cow<'ifc, str>>> {
-        debug!("Walking global scope with filters: Type={:?}, Func={:?}, Vars={:?}", type_filter, function_filter, variable_filter);
+    ) -> TypeAndCrateInformation<'ifc> {
+        debug!(
+            "Walking global scope with filters: Type={:?}, Func={:?}, Vars={:?}",
+            type_filter, function_filter, variable_filter
+        );
 
         let mut type_discovery = TypeDiscovery::new(
             ifc,
@@ -76,6 +142,9 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
             function_filter,
             variable_filter,
         );
+        type_discovery
+            .fully_qualified_names
+            .insert(DeclIndex(0), Some(TokenStream::new()));
         log_error! { {
             if let Some(global_scope) = ifc.global_scope() {
                 type_discovery
@@ -84,41 +153,54 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                         DeclIndex(0),
                         HashMap::new(),
                     );
-                type_discovery.walk_scope(global_scope, "")
+                type_discovery.walk_scope(global_scope, &FullyQualifiedName::global_namespace())
             } else {
                 Ok(())
             }
         } -> (), "Walking global scope" };
 
-        type_discovery.scope_to_contents
+        TypeAndCrateInformation {
+            scope_to_contents: type_discovery.scope_to_contents,
+            fully_qualified_names: type_discovery
+                .fully_qualified_names
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.unwrap_or_else(|| {
+                            panic!("{:?}> Must have found names for declarations by now", k)
+                        }),
+                    )
+                })
+                .collect(),
+        }
     }
 
     /// Include a type (from this crate or another) that are included (directly or transitively) by a filter.
     fn include_declaration(&mut self, index: DeclIndex) {
-        if self.included_declarations.insert(index) {
+        if !self.fully_qualified_names.contains_key(&index) {
             // If this type was previously skipped, then re-walk its declaration to discover new
             // types.
-            if let Some(SkippedType {
-                name,
-                fully_qualified_name,
-            }) = self.skipped_types.remove(&index)
-            {
+            if let Some(type_name) = self.skipped_types.remove(&index) {
+                self.fully_qualified_names
+                    .insert(index, Some(type_name.as_tokens_in_current_crate()));
+                let fully_qualified_name = type_name.as_string();
                 log_error! { {
                     debug!("{:?}> Including previously skipped {}", index, fully_qualified_name);
                     match index.tag() {
                         DeclSort::ALIAS => {
                             let decl_alias = self.ifc.decl_alias().entry(index.index())?;
-                            self.add_alias_declaration_to_emit(index, decl_alias, name)?;
+                            self.add_alias_declaration_to_emit(index, decl_alias, &type_name.name)?;
                         }
 
                         DeclSort::SCOPE => {
                             let decl_scope= self.ifc.decl_scope().entry(index.index())?;
-                            self.add_type_declaration_to_emit(index, decl_scope, &fully_qualified_name, name)?;
+                            self.add_type_declaration_to_emit(index, decl_scope, &type_name)?;
                         }
 
                         DeclSort::ENUMERATION => {
                             let decl_enum= self.ifc.decl_enum().entry(index.index())?;
-                            self.add_enum_declaration_to_emit(index, decl_enum, name)?;
+                            self.add_enum_declaration_to_emit(index, decl_enum, &type_name.name)?;
                         }
 
                         _ => {
@@ -127,17 +209,19 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                     }
 
                     Ok(())
-                } -> (), format!("Discovering type {}", &fully_qualified_name) };
+                } -> (), format!("Discovering type {}", fully_qualified_name) };
+            } else {
+                self.fully_qualified_names.insert(index, None);
             }
         }
     }
 
     /// Add member to the contents of a scope.
-    fn add_member(&mut self, container: DeclIndex, member: DeclIndex, name: Cow<'ifc, str>) {
+    fn add_member(&mut self, container: DeclIndex, member: DeclIndex, name: &Cow<'ifc, str>) {
         self.scope_to_contents
             .entry(container)
             .or_insert_with(|| HashMap::new())
-            .insert(member, name)
+            .insert(member, name.clone())
             .map(|name| panic!("Duplicate member {}", name));
     }
 
@@ -175,7 +259,12 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
 
             TypeSort::QUALIFIED => {
                 // Include the unqualified type.
-                self.include_type(self.ifc.type_qualified().entry(index.index())?.unqualified_type)?
+                self.include_type(
+                    self.ifc
+                        .type_qualified()
+                        .entry(index.index())?
+                        .unqualified_type,
+                )?
             }
 
             TypeSort::RVALUE_REFERENCE => {
@@ -207,7 +296,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         &mut self,
         index: DeclIndex,
         alias: &DeclAlias,
-        name: Cow<'ifc, str>,
+        name: &Cow<'ifc, str>,
     ) -> Result<()> {
         self.add_member(alias.home_scope, index, name);
         self.include_declaration(index);
@@ -219,7 +308,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         &mut self,
         index: DeclIndex,
         en: &DeclEnum,
-        name: Cow<'ifc, str>,
+        name: &Cow<'ifc, str>,
     ) -> Result<()> {
         self.add_member(en.home_scope, index, name);
         self.include_declaration(index);
@@ -231,14 +320,13 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         &mut self,
         index: DeclIndex,
         scope: &DeclScope,
-        fully_qualified_name: &str,
-        name: Cow<'ifc, str>,
+        name: &FullyQualifiedName<'ifc>,
     ) -> Result<()> {
-        self.add_member(scope.home_scope, index, name);
+        self.add_member(scope.home_scope, index, &name.name);
         self.include_declaration(index);
         self.include_type(scope.base)?;
         if scope.initializer != 0 {
-            self.walk_scope(scope.initializer, fully_qualified_name)
+            self.walk_scope(scope.initializer, name)
         } else {
             Ok(())
         }
@@ -252,7 +340,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         function_type: TypeIndex,
         name: Cow<'ifc, str>,
     ) -> Result<()> {
-        self.add_member(container, index, name);
+        self.add_member(container, index, &name);
 
         let func_ty = self.ifc.type_function().entry(function_type.index())?;
 
@@ -275,18 +363,22 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         container: DeclIndex,
         index: DeclIndex,
         variable_type: TypeIndex,
-        name: Cow<'ifc, str>,
+        name: &Cow<'ifc, str>,
     ) -> Result<()> {
         self.add_member(container, index, name);
         self.include_type(variable_type)
     }
 
     /// Walks a scope and checks if its members need to be included.
-    fn walk_scope(&mut self, container: ScopeIndex, container_fully_qualified_name: &str) -> Result<()> {
+    fn walk_scope(
+        &mut self,
+        container: ScopeIndex,
+        container_name: &FullyQualifiedName<'ifc>,
+    ) -> Result<()> {
         let mut anon_name_counter: u32 = 0;
 
-        fn panic_on_duplicate_skipped_type(ty: SkippedType) -> ! {
-            panic!("Duplicate skipped type {}", ty.fully_qualified_name);
+        fn panic_on_duplicate_skipped_type(ty: FullyQualifiedName) -> ! {
+            panic!("Duplicate skipped type {}", ty.as_string());
         }
 
         for member_decl_index in self.ifc.iter_scope(container)? {
@@ -296,18 +388,20 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                         let decl_alias = self.ifc.decl_alias().entry(member_decl_index.index())?;
                         let mut alias_name = self.ifc.get_string(decl_alias.name)?.to_string();
                         fixup_anon_names(&mut alias_name, &mut anon_name_counter);
-                        let fully_qualified_name = format!("{}::{}", container_fully_qualified_name, alias_name);
+                        let alias_name = container_name.make_child(alias_name);
+                        let fully_qualified_name = alias_name.as_string();
 
-                        if self.symbol_map.is_symbol_in(&alias_name) {
+                        if let Some(extern_crate) = self.symbol_map.resolve(&fully_qualified_name) {
                             debug!("{:?}> {:?} {} is defined in external crate", member_decl_index, decl_alias.type_, fully_qualified_name);
-                            self.included_declarations.insert(member_decl_index);
-                        } else if self.included_declarations.contains(&member_decl_index) || self.type_filter.is_allowed(&fully_qualified_name)
+                            self.fully_qualified_names.insert(member_decl_index, Some(alias_name.as_tokens_in_extern_crate(extern_crate)));
+                        } else if self.fully_qualified_names.contains_key(&member_decl_index) || self.type_filter.is_allowed(&fully_qualified_name)
                         {
                             debug!("{:?}> adding {:?} {} to emit list", member_decl_index, decl_alias.type_, fully_qualified_name);
-                            self.add_alias_declaration_to_emit(member_decl_index, decl_alias, alias_name.into())?;
+                            self.fully_qualified_names.insert(member_decl_index, Some(alias_name.as_tokens_in_current_crate()));
+                            self.add_alias_declaration_to_emit(member_decl_index, decl_alias, &alias_name.name)?;
                         } else {
                             debug!("{:?}> skipping {:?} {}", member_decl_index, decl_alias.type_, fully_qualified_name);
-                            self.skipped_types.insert(member_decl_index, SkippedType { name: alias_name.into(), fully_qualified_name }).map(panic_on_duplicate_skipped_type);
+                            self.skipped_types.insert(member_decl_index, alias_name).map(panic_on_duplicate_skipped_type);
                         }
                     }
 
@@ -319,12 +413,15 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
 
                                 // TODO: hack, deal with overloaded function names in nt.h
                                 if func_name != "_RTL_CONSTANT_STRING_type_check" {
-                                    // TODO: Only for non-member functions?
-                                    if self.symbol_map.is_symbol_in(&func_name) {
-                                        debug!("{:?}> function {}::{} is defined in external crate", member_decl_index, container_fully_qualified_name, func_name);
-                                    } else if self.function_filter.is_allowed_qualified_name(func_name, container_fully_qualified_name) {
-                                        debug!("{:?}> adding function {}::{} to emit list", member_decl_index, container_fully_qualified_name, func_name);
-                                        self.add_function_declaration_to_emit(func_decl.home_scope, member_decl_index, func_decl.type_, func_name.into())?;
+                                    let func_name = container_name.make_child(func_name);
+                                    let fully_qualified_name = func_name.as_string();
+                                    if let Some(extern_crate) = self.symbol_map.resolve(&fully_qualified_name) {
+                                        debug!("{:?}> function {} is defined in external crate", member_decl_index, fully_qualified_name);
+                                        self.fully_qualified_names.insert(member_decl_index, Some(func_name.as_tokens_in_extern_crate(extern_crate)));
+                                    } else if self.function_filter.is_allowed(&fully_qualified_name) {
+                                        debug!("{:?}> adding function {} to emit list", member_decl_index, fully_qualified_name);
+                                        self.fully_qualified_names.insert(member_decl_index, Some(func_name.as_tokens_in_current_crate()));
+                                        self.add_function_declaration_to_emit(func_decl.home_scope, member_decl_index, func_decl.type_, func_name.name)?;
                                     }
                                 }
                             }
@@ -343,8 +440,9 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                                 {
                                     let method_name = self.ifc.get_string(method_decl.name.index())?;
 
-                                    if self.function_filter.is_allowed_qualified_name(method_name, fully_qualified_name) {
-                                        debug!("{:?}> adding method {}::{} to emit list", member_decl_index, container_fully_qualified_name, func_name);
+                                    if self.function_filter.is_allowed_qualified_name(method_name, container_fully_qualified_name) {
+                                        debug!("{:?}> adding method {} to emit list", member_decl_index, fully_qualified_name);
+                                        self.add_name_in_current_crate(member_decl_index, container_name, &method_name);
                                         self.add_function_declaration_to_emit(method_decl.home_scope, member_decl_index, method_decl.type_, method_name.into())?;
                                     }
                                 }
@@ -363,38 +461,43 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                         } else {
                             self.ifc.get_string(nested_scope.name.index())?.to_string()
                         };
-                        let fully_qualified_name = format!("{}::{}", container_fully_qualified_name, scope_name);
+                        let scope_name = container_name.make_child(scope_name);
+                        let fully_qualified_name = scope_name.as_string();
 
                         if self.ifc.is_type_namespace(nested_scope.ty)? {
                             // Walk the namespace.
-                            debug!("{:?}> walking namespace {}", member_decl_index, scope_name);
-                            self.walk_scope(nested_scope.initializer, &fully_qualified_name)?;
-                        } else if self.symbol_map.is_symbol_in(&scope_name) {
+                            debug!("{:?}> walking namespace {}", member_decl_index, fully_qualified_name);
+                            self.walk_scope(nested_scope.initializer, &scope_name)?;
+                            self.fully_qualified_names.insert(member_decl_index, Some(scope_name.as_tokens_in_current_crate()));
+                            self.add_member(nested_scope.home_scope, member_decl_index, &scope_name.name);
+                        } else if let Some(extern_crate) = self.symbol_map.resolve(&fully_qualified_name) {
                             debug!("{:?}> {:?} {} is defined in external crate", member_decl_index, nested_scope.ty, fully_qualified_name);
-                            self.included_declarations.insert(member_decl_index);
-                        } else if self.included_declarations.contains(&member_decl_index) || self.type_filter.is_allowed(&fully_qualified_name) {
+                            self.fully_qualified_names.insert(member_decl_index, Some(scope_name.as_tokens_in_extern_crate(extern_crate)));
+                        } else if self.fully_qualified_names.contains_key(&member_decl_index) || self.type_filter.is_allowed(&fully_qualified_name) {
                             debug!("{:?}> adding {:?} {} to emit list", member_decl_index, nested_scope.ty, fully_qualified_name);
-                            self.add_type_declaration_to_emit(member_decl_index, nested_scope, &fully_qualified_name, scope_name.into())?;
+                            self.fully_qualified_names.insert(member_decl_index, Some(scope_name.as_tokens_in_current_crate()));
+                            self.add_type_declaration_to_emit(member_decl_index, nested_scope, &scope_name)?;
                         } else {
                             debug!("{:?}> skipping {:?} {}", member_decl_index, nested_scope.ty, fully_qualified_name);
-                            self.skipped_types.insert(member_decl_index, SkippedType { name: scope_name.into(), fully_qualified_name }).map(panic_on_duplicate_skipped_type);
+                            self.skipped_types.insert(member_decl_index, scope_name).map(panic_on_duplicate_skipped_type);
                         }
                     }
 
                     DeclSort::ENUMERATION => {
                         let en = self.ifc.decl_enum().entry(member_decl_index.index())?;
-                        let en_name = self.ifc.get_string(en.name)?;
-                        let fully_qualified_name = format!("{}::{}", container_fully_qualified_name, en_name);
+                        let en_name = container_name.make_child(self.ifc.get_string(en.name)?);
+                        let fully_qualified_name = en_name.as_string();
 
-                        if self.symbol_map.is_symbol_in(&en_name) {
+                        if let Some(extern_crate) = self.symbol_map.resolve(&fully_qualified_name) {
                             debug!("{:?}> {:?} {} is defined in external crate", member_decl_index, en.ty, fully_qualified_name);
-                            self.included_declarations.insert(member_decl_index);
-                        } else if self.included_declarations.contains(&member_decl_index) || self.type_filter.is_allowed(&fully_qualified_name) {
+                            self.fully_qualified_names.insert(member_decl_index, Some(en_name.as_tokens_in_extern_crate(extern_crate)));
+                        } else if self.fully_qualified_names.contains_key(&member_decl_index) || self.type_filter.is_allowed(&fully_qualified_name) {
                             debug!("{:?}> adding {:?} {} to emit list", member_decl_index, en.ty, fully_qualified_name);
-                            self.add_enum_declaration_to_emit(member_decl_index, en, en_name.into())?;
+                            self.fully_qualified_names.insert(member_decl_index, Some(en_name.as_tokens_in_current_crate()));
+                            self.add_enum_declaration_to_emit(member_decl_index, en, &en_name.name)?;
                         } else {
                             debug!("{:?}> skipping {:?} {}", member_decl_index, en.ty, fully_qualified_name);
-                            self.skipped_types.insert(member_decl_index, SkippedType { name: en_name.into(), fully_qualified_name }).map(panic_on_duplicate_skipped_type);
+                            self.skipped_types.insert(member_decl_index, en_name).map(panic_on_duplicate_skipped_type);
                         }
                     }
 
@@ -402,13 +505,16 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                         let var_decl = self.ifc.decl_var().entry(member_decl_index.index())?;
                         match var_decl.name.tag() {
                             NameSort::IDENTIFIER => {
-                                let var_name = self.ifc.get_string(var_decl.name.index())?;
+                                let var_name = container_name.make_child(self.ifc.get_string(var_decl.name.index())?);
+                                let fully_qualified_name = var_name.as_string();
 
-                                if self.symbol_map.is_symbol_in(&var_name) {
-                                    debug!("{:?}> variable {}::{} is defined in external crate", member_decl_index, container_fully_qualified_name, var_name);
-                                } else if self.variable_filter.is_allowed_qualified_name(var_name, container_fully_qualified_name) {
-                                    debug!("{:?}> adding variable {}::{} to emit list", member_decl_index, container_fully_qualified_name, var_name);
-                                    self.add_variable_declaration(var_decl.home_scope, member_decl_index, var_decl.ty, var_name.into())?;
+                                if let Some(extern_crate) = self.symbol_map.resolve(&fully_qualified_name) {
+                                    debug!("{:?}> variable {} is defined in external crate", member_decl_index, fully_qualified_name);
+                                    self.fully_qualified_names.insert(member_decl_index, Some(var_name.as_tokens_in_extern_crate(extern_crate)));
+                                } else if self.variable_filter.is_allowed(&fully_qualified_name) {
+                                    debug!("{:?}> adding variable {} to emit list", member_decl_index, fully_qualified_name);
+                                    self.fully_qualified_names.insert(member_decl_index, Some(var_name.as_tokens_in_current_crate()));
+                                    self.add_variable_declaration(var_decl.home_scope, member_decl_index, var_decl.ty, &var_name.name)?;
                                 }
                             }
                             _ => {
@@ -420,9 +526,10 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
 
                     DeclSort::FIELD => {
                         let field_decl = self.ifc.decl_field().entry(member_decl_index.index())?;
-                        let field_name = self.ifc.get_string(field_decl.name)?;
-                        debug!("{:?}> adding field {}::{} to emit list", member_decl_index, container_fully_qualified_name, field_name);
-                        self.add_variable_declaration(field_decl.home_scope, member_decl_index, field_decl.ty, field_name.into())?;
+                        let field_name = container_name.make_child(self.ifc.get_string(field_decl.name)?);
+                        debug!("{:?}> adding field {} to emit list", member_decl_index, field_name.as_string());
+                        self.add_variable_declaration(field_decl.home_scope, member_decl_index, field_decl.ty, &field_name.name)?;
+                        self.fully_qualified_names.insert(member_decl_index, Some(field_name.as_tokens_in_current_crate()));
                     }
 
                     DeclSort::INTRINSIC
@@ -440,7 +547,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                     }
                 }
                 Ok(())
-            } -> (), format!("Walking {:?} in {}", member_decl_index, container_fully_qualified_name) };
+            } -> (), format!("Walking {:?} in {}", member_decl_index, container_name.as_string()) };
             //self.had_errors = true;
         }
 

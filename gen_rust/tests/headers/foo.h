@@ -92,10 +92,11 @@ enum class Directions {
 
 namespace N1 {
     namespace N2 {
-        static constexpr Directions d1 = Directions::Up;
+        inline constexpr Directions d1 = Directions::Up;
     }
 }
 
 namespace N1::N2::N3 {
-    static constexpr int d2 = 3;
+    inline constexpr int d2 = 3;
+    inline constexpr int ignored = 4;
 }

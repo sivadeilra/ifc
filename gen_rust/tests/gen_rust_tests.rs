@@ -128,8 +128,10 @@ impl Case {
 
         let rust_generated_code = gen_rust::gen_rust(&ifc, symbol_map, &ifc_options)
             .expect("Expected gen_rust to succeed");
-        let rust_tokens_as_file: syn::File = syn::parse2(rust_generated_code)
+        println!("Raw generated code:\n```\n{}\n```", rust_generated_code);
+        let rust_tokens_as_file: syn::File = syn::parse2(rust_generated_code.clone())
             .expect("Expected gen_rust to generate well-formed Rust tokens");
+
         let rust_output_as_string = prettyplease::unparse(&rust_tokens_as_file);
 
         std::fs::write(&rust_source_path, &rust_output_as_string)

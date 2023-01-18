@@ -1,5 +1,4 @@
 use super::*;
-use anyhow::Context;
 use log::warn;
 use proc_macro2::Punct;
 
@@ -14,7 +13,7 @@ enum MacroObjectOrFunction<'a> {
 struct MacroGen<'ifc, 'gen> {
     ifc: &'ifc Ifc,
     output_macros: HashMap<&'ifc str, Result<TokenStream>>,
-    gen: &'gen Gen<'ifc>,
+    symbol_map: &'gen SymbolMap,
     is_object_like: HashMap<&'ifc str, bool>,
     work_queue: Vec<(&'ifc str, MacroObjectOrFunction<'ifc>)>,
 }
@@ -23,6 +22,7 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
     /// Adds an object-like macro into the output set.
     fn add_object_like_macro(&mut self, object: &MacroObjectLike, name: &'ifc str) {
         let result = || -> Result<TokenStream> {
+            trace!("processing: #define {} ...", name);
             let body = self.remove_parens(object.body)?;
             let mut one_output = TokenStream::new();
             self.gen_macro_body(body, name, &mut one_output)?;
@@ -44,6 +44,7 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
     /// Adds an function-like macro into the output set.
     fn add_function_like_macro(&mut self, func_like: &MacroFunctionLike, name: &'ifc str) {
         let result = || -> Result<TokenStream> {
+            trace!("processing: #define {} ...", name);
             if func_like.is_variadic() {
                 bail!("variadic macros not supported");
             }
@@ -88,8 +89,6 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
         name: &str,
         output: &mut TokenStream,
     ) -> Result<()> {
-        trace!("processing: #define {} ...", name);
-
         // It's not possible to convert all #define macros to Rust constants. We look for certain
         // patterns. The simplest macros to convert consist of a single literal constant, or a
         // a single literal constant inside parens.  More complex expressions that use operators
@@ -241,10 +240,9 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
             .get(name)
             .map(|&b| (None, b))
             .or_else(|| {
-                if let Some(ifc_name) = self.gen.symbol_map.resolve_object_like_macro(name) {
+                if let Some(ifc_name) = self.symbol_map.resolve_object_like_macro(name) {
                     Some((Some(ifc_name), true))
-                } else if let Some(ifc_name) = self.gen.symbol_map.resolve_function_like_macro(name)
-                {
+                } else if let Some(ifc_name) = self.symbol_map.resolve_function_like_macro(name) {
                     Some((Some(ifc_name), false))
                 } else if let Some(macro_obj_or_func) = self.try_find_macro_in_current_ifc(name) {
                     self.work_queue.push((name, macro_obj_or_func));
@@ -258,12 +256,10 @@ impl<'ifc, 'gen> MacroGen<'ifc, 'gen> {
             });
         let ident = Ident::new(name, Span::mixed_site());
         match is_object_like {
-            Some((Some(ifc_name), true)) => {
-                let ifc_ident = Ident::new(ifc_name, Span::mixed_site());
+            Some((Some(ifc_ident), true)) => {
                 output.extend(quote_spanned!(Span::mixed_site()=>#ifc_ident::#ident!()))
             }
-            Some((Some(ifc_name), false)) => {
-                let ifc_ident = Ident::new(ifc_name, Span::mixed_site());
+            Some((Some(ifc_ident), false)) => {
                 output.extend(quote_spanned!(Span::mixed_site()=>#ifc_ident::#ident!))
             }
             Some((None, true)) => {
@@ -465,13 +461,14 @@ impl<'a> Gen<'a> {
     /// Generates Rust macros from C++ macros.
     pub fn gen_macros(
         &self,
+        symbol_map: &SymbolMap,
         filter: options::Filter,
         output_macros: &mut Vec<TokenStream>,
     ) -> Result<()> {
         let mut macro_gen = MacroGen {
             ifc: self.ifc,
             output_macros: HashMap::new(),
-            gen: self,
+            symbol_map,
             is_object_like: HashMap::new(),
             work_queue: Vec::new(),
         };
@@ -479,7 +476,7 @@ impl<'a> Gen<'a> {
         // Add object-like macros that pass the filter.
         for object in self.ifc.macro_object_like().entries.iter() {
             let name = self.ifc.get_string(object.name)?;
-            if filter.is_allowed(name) && !self.symbol_map.is_object_like_macro_in(name) {
+            if filter.is_allowed(name) && !symbol_map.is_object_like_macro_in(name) {
                 macro_gen.add_object_like_macro(object, name);
             }
         }
@@ -487,7 +484,7 @@ impl<'a> Gen<'a> {
         // Add function-like macros that pass the filter.
         for func_like in self.ifc.macro_function_like().entries.iter() {
             let name = self.ifc.get_string(func_like.name)?;
-            if filter.is_allowed(name) && !self.symbol_map.is_function_like_macro_in(name) {
+            if filter.is_allowed(name) && !symbol_map.is_function_like_macro_in(name) {
                 macro_gen.add_function_like_macro(func_like, name);
             }
         }

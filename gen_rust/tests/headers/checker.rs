@@ -31,7 +31,7 @@ fn main() {
         all_the_flavor(&mut UseAsPointer{}, &mut UseAsReference{}, &mut (&mut UseAsReference2{} as *mut _), &[UseAsArray{}], &UseAsQualifiedRef{});
     }
 
-    // Namespace support is currently broken.
-    // assert_eq!(N1::N2::d1, Directions::Up);
-    // assert_eq!(N1::N2::N3::d2, 3);
+    // Read items in namespaces.
+    assert_eq!(N1::N2::d1, Directions::Up);
+    assert_eq!(N1::N2::N3::d2, 3);
 }
