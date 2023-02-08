@@ -476,7 +476,7 @@ impl<'a> Gen<'a> {
         // Add object-like macros that pass the filter.
         for object in self.ifc.macro_object_like().entries.iter() {
             let name = self.ifc.get_string(object.name)?;
-            if filter.is_allowed(name) && !symbol_map.is_object_like_macro_in(name) {
+            if filter.filter(name).is_allowed() && !symbol_map.is_object_like_macro_in(name) {
                 macro_gen.add_object_like_macro(object, name);
             }
         }
@@ -484,7 +484,7 @@ impl<'a> Gen<'a> {
         // Add function-like macros that pass the filter.
         for func_like in self.ifc.macro_function_like().entries.iter() {
             let name = self.ifc.get_string(func_like.name)?;
-            if filter.is_allowed(name) && !symbol_map.is_function_like_macro_in(name) {
+            if filter.filter(name).is_allowed() && !symbol_map.is_function_like_macro_in(name) {
                 macro_gen.add_function_like_macro(func_like, name);
             }
         }

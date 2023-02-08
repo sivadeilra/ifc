@@ -99,28 +99,44 @@ pub struct Filter<'a> {
     blocklist: &'a Vec<Regex>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum FilteredState {
+    Allowed,
+    NotAllowed,
+    Blocked,
+}
+
 impl<'a> Filter<'a> {
-    pub fn is_allowed(&self, name: &str) -> bool {
+    pub fn filter(&self, name: &str) -> FilteredState {
         if !self.allowlist.is_empty() {
             if let Some(matching_filter) = self.allowlist.iter().find(|regex| regex.is_match(name))
             {
                 debug!("Item {} allowed by {:?}", name, matching_filter);
             } else {
-                return false;
+                return FilteredState::NotAllowed;
             }
         }
 
         if let Some(matching_filter) = self.blocklist.iter().find(|regex| regex.is_match(name)) {
             debug!("Item {} blocked by {:?}", name, matching_filter);
-            false
+            FilteredState::Blocked
         } else {
-            true
+            FilteredState::Allowed
         }
     }
 
-    pub fn is_allowed_qualified_name(&self, name: &str, parent_name: &str) -> bool {
-        (self.allowlist.is_empty() && self.blocklist.is_empty())
-            || self.is_allowed(&format!("{}::{}", parent_name, name))
+    pub fn filter_qualified_name(&self, name: &str, parent_name: &str) -> FilteredState {
+        if self.allowlist.is_empty() && self.blocklist.is_empty() {
+            FilteredState::Allowed
+        } else {
+            self.filter(&format!("{}::{}", parent_name, name))
+        }
+    }
+}
+
+impl FilteredState {
+    pub fn is_allowed(&self) -> bool {
+        *self == FilteredState::Allowed
     }
 }
 

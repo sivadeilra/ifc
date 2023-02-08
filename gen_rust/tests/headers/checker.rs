@@ -34,4 +34,10 @@ fn main() {
     // Read items in namespaces.
     assert_eq!(N1::N2::d1, Directions::Up);
     assert_eq!(N1::N2::N3::d2, 3);
+
+    // Type that uses a blocked type: definition for the blocked type is hand-
+    // written above.
+    let _uses = UsesBlocked {
+        ib: IsBlocked {}
+    };
 }

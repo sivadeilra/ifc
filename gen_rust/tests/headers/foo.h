@@ -100,3 +100,8 @@ namespace N1::N2::N3 {
     inline constexpr int d2 = 3;
     inline constexpr int ignored = 4;
 }
+
+struct IsBlocked {};
+struct UsesBlocked {
+    IsBlocked ib;
+};
