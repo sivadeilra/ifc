@@ -105,3 +105,7 @@ struct IsBlocked {};
 struct UsesBlocked {
     IsBlocked ib;
 };
+
+struct HasOrphan {
+    struct IsOrphan * o;
+};

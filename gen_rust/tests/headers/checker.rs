@@ -40,4 +40,8 @@ fn main() {
     let _uses = UsesBlocked {
         ib: IsBlocked {}
     };
+
+    let _has_orphan = HasOrphan {
+        o: std::ptr::null_mut(),
+    };
 }

@@ -15,6 +15,9 @@ pub(crate) struct TypeAndCrateInformation<'ifc> {
 
     /// The fully qualified name (including crate) to use for a given declaration.
     pub fully_qualified_names: HashMap<DeclIndex, TokenStream>,
+
+    /// Types that do not belong to any scope.
+    pub orphans: Vec<(DeclIndex, Cow<'ifc, str>)>,
 }
 
 struct FullyQualifiedName<'a> {
@@ -99,6 +102,9 @@ pub(crate) struct TypeDiscovery<'ifc, 'opt> {
 
     /// The fully qualified name (including crate) to use for a given declaration.
     fully_qualified_names: HashMap<DeclIndex, Option<TokenStream>>,
+
+    /// Types that do not belong to any scope.
+    pub orphans: Vec<(DeclIndex, Cow<'ifc, str>)>,
 }
 
 impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
@@ -121,6 +127,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
             scope_to_contents: HashMap::new(),
             skipped_types: HashMap::new(),
             fully_qualified_names: HashMap::new(),
+            orphans: Vec::new(),
         }
     }
 
@@ -163,6 +170,10 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
             }
         } -> (), "Walking global scope" };
 
+        log_error! { {
+            type_discovery.find_orphans()
+        } -> (), "Finding orphans" };
+
         TypeAndCrateInformation {
             scope_to_contents: type_discovery.scope_to_contents,
             fully_qualified_names: type_discovery
@@ -177,6 +188,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                     )
                 })
                 .collect(),
+            orphans: type_discovery.orphans,
         }
     }
 
@@ -199,7 +211,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
 
                         DeclSort::SCOPE => {
                             let decl_scope= self.ifc.decl_scope().entry(index.index())?;
-                            self.add_type_declaration_to_emit(index, decl_scope, &type_name)?;
+                            self.add_scoped_type_declaration_to_emit(index, decl_scope, &type_name)?;
                         }
 
                         DeclSort::ENUMERATION => {
@@ -319,14 +331,34 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         self.include_type(en.base)
     }
 
-    /// Adds a type (struct/class) declaration to the set to emit, and walk its contents.
-    fn add_type_declaration_to_emit(
+    /// Adds an orphaned type (struct/class) declaration to the set to emit, and walk its contents.
+    fn add_orphaned_type_declaration_to_emit(
+        &mut self,
+        index: DeclIndex,
+        scope: &DeclScope,
+        name: &FullyQualifiedName<'ifc>,
+    ) -> Result<()> {
+        self.orphans.push((index, name.name.clone()));
+        self.add_type_declaration_to_emit_internal(index, scope, name)
+    }
+
+    /// Adds an orphaned type (struct/class) declaration to the set to emit, and walk its contents.
+    fn add_scoped_type_declaration_to_emit(
         &mut self,
         index: DeclIndex,
         scope: &DeclScope,
         name: &FullyQualifiedName<'ifc>,
     ) -> Result<()> {
         self.add_member(scope.home_scope, index, &name.name);
+        self.add_type_declaration_to_emit_internal(index, scope, name)
+    }
+
+    fn add_type_declaration_to_emit_internal(
+        &mut self,
+        index: DeclIndex,
+        scope: &DeclScope,
+        name: &FullyQualifiedName<'ifc>,
+    ) -> Result<()> {
         self.include_declaration(index);
         self.include_type(scope.base)?;
         if scope.initializer != 0 {
@@ -501,7 +533,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                             self.fully_qualified_names.insert(member_decl_index, Some(scope_name.as_tokens_in_current_crate()));
                             self.add_member(nested_scope.home_scope, member_decl_index, &scope_name.name);
                         } else {
-                            self.process_type(member_decl_index, nested_scope.ty, nested_scope, scope_name, Self::add_type_declaration_to_emit)?;
+                            self.process_type(member_decl_index, nested_scope.ty, nested_scope, scope_name, Self::add_scoped_type_declaration_to_emit)?;
                         }
                     }
 
@@ -560,6 +592,86 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                 Ok(())
             } -> (), format!("Walking {:?} in {}", member_decl_index, container_name.as_string()) };
             //self.had_errors = true;
+        }
+
+        Ok(())
+    }
+
+    /// Walk all the scopes, see if there are declarations that are not part of any scope.
+    fn find_orphans(&mut self) -> Result<()> {
+        let ifc = self.ifc;
+
+        struct State {
+            decl_scope_found: Vec<bool>,
+        }
+
+        let mut state = State {
+            decl_scope_found: vec![false; ifc.decl_scope().entries.len()],
+        };
+
+        fn search_scope(ifc: &Ifc, state: &mut State, parent_scope: ScopeIndex) -> Result<()> {
+            for member_decl in ifc.iter_scope(parent_scope)? {
+                match member_decl.tag() {
+                    DeclSort::FUNCTION
+                    | DeclSort::FIELD
+                    | DeclSort::ALIAS
+                    | DeclSort::TEMPLATE
+                    | DeclSort::EXPLICIT_INSTANTIATION
+                    | DeclSort::EXPLICIT_SPECIALIZATION
+                    | DeclSort::PARTIAL_SPECIALIZATION
+                    | DeclSort::USING_DECLARATION
+                    | DeclSort::ENUMERATOR
+                    | DeclSort::ENUMERATION
+                    | DeclSort::VARIABLE
+                    | DeclSort::CONSTRUCTOR
+                    | DeclSort::METHOD
+                    | DeclSort::DESTRUCTOR
+                    | DeclSort::INTRINSIC
+                    | DeclSort::BITFIELD => {}
+
+                    DeclSort::SCOPE => {
+                        let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
+                        if state.decl_scope_found[member_decl.index() as usize] {
+                            warn!("found scope twice!  {:?}", member_decl);
+                        } else {
+                            state.decl_scope_found[member_decl.index() as usize] = true;
+                            if nested_scope.initializer != 0 {
+                                search_scope(ifc, state, nested_scope.initializer)?;
+                            }
+                        }
+                    }
+
+                    _ => todo!("unrecognized member decl: {:?}", member_decl),
+                }
+            }
+
+            Ok(())
+        }
+
+        if let Some(global_scope) = ifc.global_scope() {
+            search_scope(ifc, &mut state, global_scope)?;
+        }
+
+        for (i, value) in state.decl_scope_found.iter().enumerate() {
+            log_error! { {
+                if !*value {
+                    let decl_index = DeclIndex::new(DeclSort::SCOPE, i as u32);
+                    let nested_scope = ifc.decl_scope().entry(decl_index.index())?;
+                    let scope_name = FullyQualifiedName::global_namespace().make_child(self.ifc.get_string(nested_scope.name.index())?.to_string());
+                    debug!(
+                        "{:?}> {} not found while walking. forward decl? {}",
+                        decl_index,
+                        scope_name.as_string(),
+                        nested_scope.initializer == 0
+                    );
+
+                    // If it looks like a forward declaration, then let's emit a type for it.
+                    if nested_scope.initializer == 0 {
+                        self.process_type(decl_index, nested_scope.ty, nested_scope, scope_name, Self::add_orphaned_type_declaration_to_emit)?;
+                    }
+                }
+                Ok(())
+            } -> (), format!("Generating forward decl id {}", i) };
         }
 
         Ok(())

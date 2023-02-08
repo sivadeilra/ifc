@@ -345,7 +345,7 @@ pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<T
     gen.gen_macros(&symbol_map, options.macro_filter(), &mut outputs.macros)?;
 
     gen.gen_types(&mut outputs.scopes)?;
-    gen.find_orphans(&mut outputs.scopes)?;
+    gen.emit_orphans(type_and_crate_info.orphans, &mut outputs.scopes)?;
     Ok(outputs.finish())
 }
 
@@ -729,86 +729,14 @@ pub struct SymbolRemaps {
 }
 
 impl<'a> Gen<'a> {
-    /// Walk all the scopes, see if there are declarations that are not part of any scope.
-    fn find_orphans(&self, outputs: &mut Vec<TokenStream>) -> Result<()> {
-        let ifc = self.ifc;
-
-        struct State {
-            decl_scope_found: Vec<bool>,
-        }
-
-        let mut state = State {
-            decl_scope_found: vec![false; ifc.decl_scope().entries.len()],
-        };
-
-        fn search_scope(ifc: &Ifc, state: &mut State, parent_scope: ScopeIndex) -> Result<()> {
-            for member_decl in ifc.iter_scope(parent_scope)? {
-                match member_decl.tag() {
-                    DeclSort::FUNCTION
-                    | DeclSort::FIELD
-                    | DeclSort::ALIAS
-                    | DeclSort::TEMPLATE
-                    | DeclSort::EXPLICIT_INSTANTIATION
-                    | DeclSort::EXPLICIT_SPECIALIZATION
-                    | DeclSort::PARTIAL_SPECIALIZATION
-                    | DeclSort::USING_DECLARATION
-                    | DeclSort::ENUMERATOR
-                    | DeclSort::ENUMERATION
-                    | DeclSort::VARIABLE
-                    | DeclSort::CONSTRUCTOR
-                    | DeclSort::METHOD
-                    | DeclSort::DESTRUCTOR
-                    | DeclSort::INTRINSIC
-                    | DeclSort::BITFIELD => {}
-
-                    DeclSort::SCOPE => {
-                        let nested_scope = ifc.decl_scope().entry(member_decl.index())?;
-                        if state.decl_scope_found[member_decl.index() as usize] {
-                            warn!("found scope twice!  {:?}", member_decl);
-                        } else {
-                            state.decl_scope_found[member_decl.index() as usize] = true;
-                            if nested_scope.initializer != 0 {
-                                search_scope(ifc, state, nested_scope.initializer)?;
-                            }
-                        }
-                    }
-
-                    _ => todo!("unrecognized member decl: {:?}", member_decl),
-                }
-            }
-
-            Ok(())
-        }
-
-        if let Some(global_scope) = ifc.global_scope() {
-            search_scope(ifc, &mut state, global_scope)?;
-        }
-
-        for (i, value) in state.decl_scope_found.iter().enumerate() {
-            log_error! { {
-                if !*value {
-                    let nested_scope = ifc.decl_scope().entry(i as u32)?;
-                    if let Some(filtered_output) = self.scope_to_contents.get(&nested_scope.home_scope)
-                        && let Some(name) = filtered_output.get(&DeclIndex(i as u32)) {
-                        debug!(
-                            "scope #{} not found:  {}   forward decl? {}",
-                            i,
-                            name,
-                            nested_scope.initializer == 0
-                        );
-
-                        // If it looks like a forward declaration, then let's emit a type for it.
-                        if nested_scope.initializer == 0 {
-                            self.emit_forward_decl_scope(
-                                DeclIndex::new(DeclSort::SCOPE, i as u32),
-                                name,
-                                outputs,
-                            )?;
-                        }
-                    }
-                }
-                Ok(())
-            } -> (), format!("Generating forward decl id {}", i) };
+    /// Emit declarations that are not part of any scope.
+    fn emit_orphans(&self, orphans: Vec<(DeclIndex, Cow<'_, str>)>, outputs: &mut Vec<TokenStream>) -> Result<()> {
+        for (decl_index, name) in orphans {
+            self.emit_forward_decl_scope(
+                decl_index,
+                &name,
+                outputs,
+            )?;
         }
 
         Ok(())

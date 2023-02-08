@@ -31,7 +31,7 @@ fn headers_test() {
         "foo",
         Options::for_testing(&TestOptions {
             blocklist_macro: &["^FOO_DECREMENT$"],
-            allowlist_type: &["^::Classy$", "^::Foo.*$", "^::UsesBlocked$"],
+            allowlist_type: &["^::Classy$", "^::Foo.*$", "^::UsesBlocked$", "Orphan"],
             blocklist_type: &["^::IsBlocked$"],
             allowlist_function: &["^::[a-z_]+*_flavor$"],
             allowlist_variable: &["^::N1::.*$"],
