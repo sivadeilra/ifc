@@ -182,7 +182,7 @@ impl FilteredState {
 
 #[derive(Default)]
 pub struct TestOptions<'a> {
-    pub standalone: bool,
+    pub standalone: Option<bool>,
     pub allowlist_macro: &'a [&'static str],
     pub blocklist_macro: &'a [&'static str],
     pub allowlist_type: &'a [&'static str],
@@ -213,7 +213,7 @@ impl Options {
 
     pub fn for_testing(options: &TestOptions) -> Self {
         Self {
-            standalone: options.standalone,
+            standalone: options.standalone.unwrap_or(true),
             allowlist_macro: options
                 .allowlist_macro
                 .iter()

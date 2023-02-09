@@ -35,7 +35,7 @@ fn headers_test() {
         "is_wrapped.h.ifc",
         "is_wrapped",
         Options::for_testing(&TestOptions {
-            standalone: false,
+            standalone: Some(false),
             rust_mod_name: "wrapped::inner",
             ..Default::default()
         }),
@@ -73,7 +73,7 @@ fn headers_test() {
         "nested.h.ifc",
         "nested",
         Options::for_testing(&TestOptions {
-            standalone: false,
+            standalone: Some(false),
             rust_mod_name: "nested",
             ..Default::default()
         }),

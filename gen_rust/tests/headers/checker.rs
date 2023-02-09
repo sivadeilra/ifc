@@ -6,6 +6,8 @@ extern crate wrapper;
 use foo::*;
 use bar::*;
 
+#[allow(non_snake_case)]
+#[allow(dead_code)]
 mod nested {
     include!("nested.rs");
 }

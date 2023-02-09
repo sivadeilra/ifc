@@ -70,13 +70,6 @@ impl GenOutputs {
         let mut output = self.top;
         output.extend(self.scopes);
         output.extend(self.macros);
-        output.extend(quote! {
-            pub mod __typedefs {
-                use super::*;
-            }
-            pub use __typedefs::*;
-        });
-
         output
     }
 }
