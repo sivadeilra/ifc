@@ -104,6 +104,18 @@ impl Case {
         rust_crate_name: &str,
         ifc_options: Options,
     ) {
+        let rust_source_path =
+            self.read_ifc_generate_rust(ifc_references, ifc_filename, rust_crate_name, ifc_options);
+        self.compile_rust(&rust_source_path);
+    }
+
+    fn read_ifc_generate_rust(
+        &self,
+        ifc_references: &[(&str, &str)],
+        ifc_filename: &str,
+        rust_crate_name: &str,
+        ifc_options: Options,
+    ) -> PathBuf {
         let mut builder = env_logger::builder();
         builder.is_test(true).filter_level(log::LevelFilter::Trace);
         // If the logger is already set up by a previous test run, then setting it up again will
@@ -123,7 +135,12 @@ impl Case {
         for (ref_name, ref_filename) in ifc_references.iter() {
             let ref_path = self.case_tmp_dir.join(ref_filename);
             let ref_ifc = self.read_ifc(&ref_path.to_string_lossy());
-            symbol_map.add_ref_ifc(ref_name, &ref_ifc).unwrap();
+            symbol_map
+                .add_ref_ifc(
+                    gen_rust::parse_qualified_name(ref_name, false).unwrap(),
+                    &ref_ifc,
+                )
+                .unwrap();
         }
 
         let rust_generated_code = gen_rust::gen_rust(&ifc, symbol_map, &ifc_options)
@@ -137,16 +154,20 @@ impl Case {
         std::fs::write(&rust_source_path, &rust_output_as_string)
             .expect("Expected to write Rust source code");
 
-        let mut rustc = self.cmd_rustc();
-        rustc.arg("--crate-type=rlib");
-        rustc.arg(&rust_source_path);
-        self.spawn_and_wait(rustc);
-        println!("Compiled IFC-to-Rust crate.");
-
         assert!(
             !HAS_SEEN_ERROR.swap(false, std::sync::atomic::Ordering::Relaxed),
             "An unexpected error was logged"
         );
+
+        rust_source_path
+    }
+
+    fn compile_rust(&self, rust_source_path: &PathBuf) {
+        let mut rustc = self.cmd_rustc();
+        rustc.arg("--crate-type=rlib");
+        rustc.arg(rust_source_path);
+        self.spawn_and_wait(rustc);
+        println!("Compiled IFC-to-Rust crate.");
     }
 }
 

@@ -69,13 +69,13 @@ impl<'a> FullyQualifiedName<'a> {
         })
     }
 
-    fn as_tokens_in_current_crate(&self) -> TokenStream {
+    fn as_tokens_in_current_crate(&self, mod_name: &TokenStream) -> TokenStream {
         let ident = self.name_as_ident();
         let container = &self.container_as_tokens;
-        quote!(crate #container :: #ident)
+        quote!(crate #mod_name #container :: #ident)
     }
 
-    fn as_tokens_in_extern_crate(&self, extern_crate: &Ident) -> TokenStream {
+    fn as_tokens_in_extern_crate(&self, extern_crate: &TokenStream) -> TokenStream {
         let ident = self.name_as_ident();
         let container = &self.container_as_tokens;
         quote!(#extern_crate #container :: #ident)
@@ -93,6 +93,8 @@ pub(crate) struct TypeDiscovery<'ifc, 'opt> {
     function_filter: Filter<'opt>,
     variable_filter: Filter<'opt>,
 
+    current_crate_mod_name: &'opt TokenStream,
+
     /// Scopes in the current crate and their contents that are to be emitted.
     scope_to_contents: HashMap<DeclIndex, HashMap<DeclIndex, Cow<'ifc, str>>>,
 
@@ -108,29 +110,6 @@ pub(crate) struct TypeDiscovery<'ifc, 'opt> {
 }
 
 impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
-    /// Creates a new TypeDiscovery object.
-    fn new(
-        ifc: &'ifc Ifc,
-        symbol_map: &'ifc SymbolMap,
-        renamed_decls: HashMap<DeclIndex, Ident>,
-        type_filter: Filter<'opt>,
-        function_filter: Filter<'opt>,
-        variable_filter: Filter<'opt>,
-    ) -> Self {
-        Self {
-            ifc,
-            symbol_map,
-            renamed_decls,
-            type_filter,
-            function_filter,
-            variable_filter,
-            scope_to_contents: HashMap::new(),
-            skipped_types: HashMap::new(),
-            fully_qualified_names: HashMap::new(),
-            orphans: Vec::new(),
-        }
-    }
-
     /// Walks the global scope and discovers the set of scopes and their contents to be emitted.
     pub fn walk_global_scope(
         ifc: &'ifc Ifc,
@@ -139,20 +118,26 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
         type_filter: Filter<'opt>,
         function_filter: Filter<'opt>,
         variable_filter: Filter<'opt>,
+        current_crate_mod_name: &'opt TokenStream,
     ) -> TypeAndCrateInformation<'ifc> {
         debug!(
             "Walking global scope with filters: Type={:?}, Func={:?}, Vars={:?}",
             type_filter, function_filter, variable_filter
         );
 
-        let mut type_discovery = TypeDiscovery::new(
+        let mut type_discovery = TypeDiscovery {
             ifc,
             symbol_map,
             renamed_decls,
             type_filter,
             function_filter,
             variable_filter,
-        );
+            current_crate_mod_name,
+            scope_to_contents: HashMap::new(),
+            skipped_types: HashMap::new(),
+            fully_qualified_names: HashMap::new(),
+            orphans: Vec::new(),
+        };
         type_discovery
             .fully_qualified_names
             .insert(DeclIndex(0), Some(TokenStream::new()));
@@ -198,8 +183,10 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
             // If this type was previously skipped, then re-walk its declaration to discover new
             // types.
             if let Some(type_name) = self.skipped_types.remove(&index) {
-                self.fully_qualified_names
-                    .insert(index, Some(type_name.as_tokens_in_current_crate()));
+                self.fully_qualified_names.insert(
+                    index,
+                    Some(type_name.as_tokens_in_current_crate(self.current_crate_mod_name)),
+                );
                 let fully_qualified_name = type_name.as_string();
                 log_error! { {
                     debug!("{:?}> Including previously skipped {}", index, fully_qualified_name);
@@ -420,8 +407,10 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                     "{:?}> adding {:?} {} to emit list",
                     decl, ty, fully_qualified_name
                 );
-                self.fully_qualified_names
-                    .insert(decl, Some(name.as_tokens_in_current_crate()));
+                self.fully_qualified_names.insert(
+                    decl,
+                    Some(name.as_tokens_in_current_crate(self.current_crate_mod_name)),
+                );
                 add_type_to_emit(self, decl, decl_spec, &name)?;
             } else {
                 debug!("{:?}> skipping {:?} {}", decl, ty, fully_qualified_name);
@@ -483,7 +472,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                                         self.fully_qualified_names.insert(member_decl_index, Some(func_name.as_tokens_in_extern_crate(extern_crate)));
                                     } else if self.function_filter.filter(&fully_qualified_name).is_allowed() {
                                         debug!("{:?}> adding function {} to emit list", member_decl_index, fully_qualified_name);
-                                        self.fully_qualified_names.insert(member_decl_index, Some(func_name.as_tokens_in_current_crate()));
+                                        self.fully_qualified_names.insert(member_decl_index, Some(func_name.as_tokens_in_current_crate(self.current_crate_mod_name)));
                                         self.add_function_declaration_to_emit(func_decl.home_scope, member_decl_index, func_decl.type_, func_name.name)?;
                                     }
                                 }
@@ -530,7 +519,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                             // Walk the namespace.
                             debug!("{:?}> walking namespace {}", member_decl_index, scope_name.as_string());
                             self.walk_scope(nested_scope.initializer, &scope_name)?;
-                            self.fully_qualified_names.insert(member_decl_index, Some(scope_name.as_tokens_in_current_crate()));
+                            self.fully_qualified_names.insert(member_decl_index, Some(scope_name.as_tokens_in_current_crate(self.current_crate_mod_name)));
                             self.add_member(nested_scope.home_scope, member_decl_index, &scope_name.name);
                         } else {
                             self.process_type(member_decl_index, nested_scope.ty, nested_scope, scope_name, Self::add_scoped_type_declaration_to_emit)?;
@@ -556,7 +545,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                                     self.fully_qualified_names.insert(member_decl_index, Some(var_name.as_tokens_in_extern_crate(extern_crate)));
                                 } else if self.variable_filter.filter(&fully_qualified_name).is_allowed() {
                                     debug!("{:?}> adding variable {} to emit list", member_decl_index, fully_qualified_name);
-                                    self.fully_qualified_names.insert(member_decl_index, Some(var_name.as_tokens_in_current_crate()));
+                                    self.fully_qualified_names.insert(member_decl_index, Some(var_name.as_tokens_in_current_crate(self.current_crate_mod_name)));
                                     self.add_variable_declaration(var_decl.home_scope, member_decl_index, var_decl.ty, &var_name.name)?;
                                 }
                             }
@@ -572,7 +561,7 @@ impl<'ifc, 'opt> TypeDiscovery<'ifc, 'opt> {
                         let field_name = container_name.make_child(self.ifc.get_string(field_decl.name)?);
                         debug!("{:?}> adding field {} to emit list", member_decl_index, field_name.as_string());
                         self.add_variable_declaration(field_decl.home_scope, member_decl_index, field_decl.ty, &field_name.name)?;
-                        self.fully_qualified_names.insert(member_decl_index, Some(field_name.as_tokens_in_current_crate()));
+                        self.fully_qualified_names.insert(member_decl_index, Some(field_name.as_tokens_in_current_crate(self.current_crate_mod_name)));
                     }
 
                     DeclSort::INTRINSIC

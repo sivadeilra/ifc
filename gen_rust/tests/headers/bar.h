@@ -1,4 +1,5 @@
 #include "foo.h"
+#include "is_wrapped.h"
 
 #define BAR_SOMETHING 3000
 #define BAR_MORE_STUFF 3001
@@ -13,4 +14,5 @@ struct BarState {
     int puppies;
     int kittens;
     FooStuff foo;
+    InWrappedFile wrapped;
 };

@@ -6,7 +6,7 @@
 use anyhow::{bail, Result};
 use ifc::*;
 use log::{debug, info, trace, warn};
-pub use options::{Options, TestOptions};
+pub use options::*;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::*;
@@ -95,7 +95,7 @@ pub struct ReferencedIfc {
 
 #[derive(Default, Clone)]
 pub struct SymbolMap {
-    pub crates: Vec<Ident>,
+    pub crates: Vec<TokenStream>,
     /// Maps symbol names that are in the global namespace scope to the IFC which defines them.
     /// For example, `"_GUID"` to some index.
     pub global_symbols: HashMap<String, RefIndex>,
@@ -119,10 +119,11 @@ impl SymbolMap {
     /// This is a terrible idea, but it's good enough to start with.
     ///
     /// For now, we only process the root scope.  So no nested namespaces.
-    pub fn add_ref_ifc(&mut self, ifc_name: &str, ifc: &Ifc) -> Result<RefIndex> {
+    pub fn add_ref_ifc(&mut self, crate_name: TokenStream, ifc: &Ifc) -> Result<RefIndex> {
         let ifc_index = self.crates.len();
 
-        self.crates.push(Ident::new(ifc_name, Span::call_site()));
+        let ifc_name = crate_name.to_string();
+        self.crates.push(crate_name);
 
         let mut num_added: u64 = 0;
 
@@ -274,17 +275,17 @@ impl SymbolMap {
         self.function_like_macros.contains_key(name)
     }
 
-    pub fn resolve(&self, name: &str) -> Option<&Ident> {
+    pub fn resolve(&self, name: &str) -> Option<&TokenStream> {
         let crate_index = *self.global_symbols.get(name)?;
         Some(&self.crates[crate_index])
     }
 
-    pub fn resolve_object_like_macro(&self, name: &str) -> Option<&Ident> {
+    pub fn resolve_object_like_macro(&self, name: &str) -> Option<&TokenStream> {
         let crate_index = *self.object_like_macros.get(name)?;
         Some(&self.crates[crate_index])
     }
 
-    pub fn resolve_function_like_macro(&self, name: &str) -> Option<&Ident> {
+    pub fn resolve_function_like_macro(&self, name: &str) -> Option<&TokenStream> {
         let crate_index = *self.function_like_macros.get(name)?;
         Some(&self.crates[crate_index])
     }
@@ -325,6 +326,7 @@ pub fn gen_rust(ifc: &Ifc, symbol_map: SymbolMap, options: &Options) -> Result<T
         options.type_filter(),
         options.function_filter(),
         options.variable_filter(),
+        &options.rust_mod_name,
     );
 
     let gen = Gen::new(
@@ -363,7 +365,7 @@ impl<'a> Gen<'a> {
         })
     }
 
-    fn gen_common_module_header(&self, extern_crates: &Vec<Ident>) -> Result<TokenStream> {
+    fn gen_common_module_header(&self, extern_crates: &Vec<TokenStream>) -> Result<TokenStream> {
         let extern_crates = self.gen_extern_crate(extern_crates)?;
 
         Ok(quote! {
@@ -506,10 +508,26 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn gen_extern_crate(&self, extern_crates: &Vec<Ident>) -> Result<TokenStream> {
+    fn gen_extern_crate(&self, extern_crates: &Vec<TokenStream>) -> Result<TokenStream> {
+        // Gather unique external crate names
+        let mut extern_crates = extern_crates
+            .iter()
+            .filter_map(|qualified_name| {
+                let mut crate_name = qualified_name.to_string();
+                if let Some(qualifier_index) = crate_name.find("::") {
+                    crate_name.truncate(qualifier_index);
+                }
+                crate_name.truncate(crate_name.trim_end().len());
+                (crate_name != "crate").then(|| crate_name)
+            })
+            .collect::<Vec<_>>();
+        extern_crates.sort();
+        extern_crates.dedup();
+
         // Add "extern crate foo;" declarations.
         let mut output = TokenStream::new();
-        for ident in extern_crates {
+        for crate_name in extern_crates {
+            let ident = Ident::new(&crate_name, Span::call_site());
             output.extend(quote! {
                 extern crate #ident;
             });
@@ -730,13 +748,13 @@ pub struct SymbolRemaps {
 
 impl<'a> Gen<'a> {
     /// Emit declarations that are not part of any scope.
-    fn emit_orphans(&self, orphans: Vec<(DeclIndex, Cow<'_, str>)>, outputs: &mut Vec<TokenStream>) -> Result<()> {
+    fn emit_orphans(
+        &self,
+        orphans: Vec<(DeclIndex, Cow<'_, str>)>,
+        outputs: &mut Vec<TokenStream>,
+    ) -> Result<()> {
         for (decl_index, name) in orphans {
-            self.emit_forward_decl_scope(
-                decl_index,
-                &name,
-                outputs,
-            )?;
+            self.emit_forward_decl_scope(decl_index, &name, outputs)?;
         }
 
         Ok(())

@@ -1,13 +1,14 @@
 use anyhow::{Context, Result};
+use proc_macro2::TokenStream;
 use std::{path::PathBuf, str::FromStr};
 use structopt::StructOpt;
 
-fn parse_ifc_reference(src: &str) -> Result<(String, PathBuf)> {
+fn parse_ifc_reference(src: &str) -> Result<(TokenStream, PathBuf)> {
     let (name, path) = src
         .split_once('=')
         .context("Argument's value must be in the format `crate_name=ifc_path`")?;
     Ok((
-        name.to_string(),
+        gen_rust::parse_qualified_name(name, false)?,
         PathBuf::from_str(path).context("IFC's path contains invalid characters")?,
     ))
 }
@@ -23,9 +24,9 @@ pub struct Options {
     pub output: PathBuf,
 
     /// References to other IFC files.
-    /// Must be in the format `crate_name=ifc_path`
+    /// Must be in the format `crate_name=ifc_path` OR `crate_name::mod_name=ifc_path`
     #[structopt(long, parse(try_from_str = parse_ifc_reference))]
-    pub references: Vec<(String, PathBuf)>,
+    pub references: Vec<(TokenStream, PathBuf)>,
 
     /// Output verbosity.
     /// Default: errors.

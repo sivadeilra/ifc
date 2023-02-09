@@ -193,20 +193,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ifcbindgen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "env_logger",
- "gen_rust",
- "ifc",
- "log",
- "prettyplease",
- "structopt",
- "syn",
-]
-
-[[package]]
 name = "ifcdump"
 version = "0.1.0"
 dependencies = [

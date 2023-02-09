@@ -1,9 +1,6 @@
-#![forbid(unused_must_use)]
-#![forbid(unsafe_code)]
+use std::{io::Write, sync::atomic::AtomicBool};
 
-use std::{sync::atomic::AtomicBool, io::Write};
-
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use gen_rust::log_error;
 use ifc::*;
 use structopt::StructOpt;
@@ -44,7 +41,7 @@ fn main() -> Result<()> {
         let ifc = read_ifc(&std::fs::canonicalize(&options.ifc).context("Invalid path to the ifc")?);
 
         let mut symbol_map = gen_rust::SymbolMap::default();
-        for (ref_name, ref_filename) in options.references.iter() {
+        for (ref_name, ref_filename) in options.references {
             let ref_path = std::fs::canonicalize(ref_filename).context("Invalid path to referenced IFC")?;
             let ref_ifc = read_ifc(&ref_path);
             symbol_map.add_ref_ifc(ref_name, &ref_ifc).context("Failed to add reference to IFC")?;

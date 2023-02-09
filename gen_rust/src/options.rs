@@ -1,5 +1,7 @@
 use anyhow::Context;
 use log::debug;
+use proc_macro2::{Ident, Punct, Span, TokenStream};
+use quote::TokenStreamExt;
 use regex::Regex;
 use structopt::StructOpt;
 
@@ -7,6 +9,38 @@ fn parse_regex(value: &str) -> anyhow::Result<Regex> {
     regex::RegexBuilder::new(value)
         .build()
         .context("Invalid regex")
+}
+
+pub fn parse_qualified_name(
+    value: &str,
+    prepend_leading_colons: bool,
+) -> anyhow::Result<TokenStream> {
+    let mut output = TokenStream::new();
+    if !value.is_empty() {
+        for segment in value.split("::") {
+            output = match std::panic::catch_unwind(move || {
+                if prepend_leading_colons || !output.is_empty() {
+                    output.append(Punct::new(':', proc_macro2::Spacing::Joint));
+                    output.append(Punct::new(':', proc_macro2::Spacing::Alone));
+                }
+                output.append(Ident::new(segment, Span::call_site()));
+                output
+            }) {
+                Ok(output) => output,
+                Err(err) => {
+                    let msg = err
+                        .downcast::<String>()
+                        .map_or_else(|_| "Unknown error".to_string(), |b| *b);
+                    anyhow::bail!("Not a valid Rust qualifier: {msg}");
+                }
+            };
+        }
+    }
+    Ok(output)
+}
+
+fn parse_mod_name(value: &str) -> anyhow::Result<TokenStream> {
+    parse_qualified_name(value, true)
 }
 
 #[derive(Clone, Debug, StructOpt, Default)]
@@ -61,6 +95,12 @@ pub struct Options {
     /// prevent non-member variables in the blocklist from being generated.
     #[structopt(long, parse(try_from_str = parse_regex))]
     blocklist_variable: Vec<Regex>,
+
+    /// If specified, all fully-qualified names for items in the current crate
+    /// will be prepended with the given `mod` name (useful if the generated
+    /// file consumed via `!include` in a module.
+    #[structopt(long, parse(try_from_str = parse_mod_name))]
+    pub rust_mod_name: TokenStream,
 }
 
 impl Options {
@@ -142,6 +182,7 @@ impl FilteredState {
 
 #[derive(Default)]
 pub struct TestOptions<'a> {
+    pub standalone: bool,
     pub allowlist_macro: &'a [&'static str],
     pub blocklist_macro: &'a [&'static str],
     pub allowlist_type: &'a [&'static str],
@@ -150,6 +191,7 @@ pub struct TestOptions<'a> {
     pub blocklist_function: &'a [&'static str],
     pub allowlist_variable: &'a [&'static str],
     pub blocklist_variable: &'a [&'static str],
+    pub rust_mod_name: &'static str,
 }
 
 impl Options {
@@ -165,11 +207,13 @@ impl Options {
             blocklist_function: Vec::new(),
             allowlist_variable: Vec::new(),
             blocklist_variable: Vec::new(),
+            rust_mod_name: TokenStream::new(),
         }
     }
 
     pub fn for_testing(options: &TestOptions) -> Self {
         Self {
+            standalone: options.standalone,
             allowlist_macro: options
                 .allowlist_macro
                 .iter()
@@ -210,6 +254,7 @@ impl Options {
                 .iter()
                 .map(|item| parse_regex(item).unwrap())
                 .collect::<Vec<_>>(),
+            rust_mod_name: parse_mod_name(options.rust_mod_name).unwrap(),
             ..Self::default_for_testing()
         }
     }

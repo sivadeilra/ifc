@@ -2,8 +2,13 @@
 
 extern crate foo;
 extern crate bar;
+extern crate wrapper;
 use foo::*;
 use bar::*;
+
+mod nested {
+    include!("nested.rs");
+}
 
 fn main() {
     // Macros (that rely on macros)
@@ -17,6 +22,15 @@ fn main() {
         _base1: IWhatever {},
         klass: 42.0,
         uaf: UsedAsField { v: -1 },
+    };
+
+    // InWrappedFile is included within a `mod`, so make sure that we can
+    // reference the fully qualified name.
+    let _b = BarState {
+        puppies: 5,
+        kittens: 42,
+        foo: FooStuff{ id: 1, a: 2, b: 3, c: 4.0 },
+        wrapped: wrapper::wrapped::inner::InWrappedFile{},
     };
 
     unsafe {
